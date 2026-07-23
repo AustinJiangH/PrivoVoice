@@ -21,11 +21,16 @@ import VoixfulKit
 final class HotkeyMonitor {
     var onPress: (@MainActor () -> Void)?
     var onRelease: (@MainActor () -> Void)?
+    /// Fired for every global key event the tap sees (a liveness diagnostic).
+    var onActivity: (@MainActor () -> Void)?
+    /// Fired when permission/activation state changes (so the UI can update).
+    var onPermissionChange: (@MainActor () -> Void)?
 
     private let settings: AppSettings
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var isDown = false
+    private var retryTimer: Timer?
 
     /// Tap installed and receiving events (Input Monitoring granted).
     private(set) var isActive = false
@@ -44,13 +49,35 @@ final class HotkeyMonitor {
         // non-Sendable global `kAXTrustedCheckOptionPrompt` under Swift 6.
         canPaste = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         installTap()
+        scheduleRetry()
     }
 
     /// Re-check permissions (no prompt) and install the tap if it isn't yet.
-    /// Call when the app regains focus after the user visits System Settings.
     func retry() {
         if !canPaste { canPaste = AXIsProcessTrusted() }
         installTap()
+        scheduleRetry()
+    }
+
+    /// Poll for permission until the tap is live. A menu-bar (`LSUIElement`) app
+    /// can't rely on `applicationDidBecomeActive` firing after the user grants in
+    /// System Settings, so we check on a timer instead of only on focus.
+    private func scheduleRetry() {
+        if isActive {
+            retryTimer?.invalidate(); retryTimer = nil
+            onPermissionChange?()
+            return
+        }
+        guard retryTimer == nil else { return }
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if !self.canPaste { self.canPaste = AXIsProcessTrusted() }
+                self.installTap()
+                self.onPermissionChange?()
+                if self.isActive { self.retryTimer?.invalidate(); self.retryTimer = nil }
+            }
+        }
     }
 
     /// The keyboard tap only succeeds once Input Monitoring is granted.
@@ -111,6 +138,9 @@ final class HotkeyMonitor {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return
         }
+
+        // Liveness: any event here proves Input Monitoring is working.
+        onActivity?()
 
         let combo = settings.hotkey
         guard !combo.isEmpty else { return }

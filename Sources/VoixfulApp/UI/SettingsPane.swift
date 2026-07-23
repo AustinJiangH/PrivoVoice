@@ -28,6 +28,27 @@ struct SettingsPane: View {
                     .foregroundStyle(.secondary)
 
                 Toggle("Copy transcript to clipboard automatically", isOn: $settings.autoCopy)
+
+                LabeledContent("Hotkey status") {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(env.appState.hotkeyActive ? Color.green : Color.orange)
+                            .frame(width: 8, height: 8)
+                        Text(env.appState.hotkeyActive ? "Active" : "Waiting for permission")
+                        Text("· keys detected: \(env.appState.inputEventsSeen)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if !env.appState.hotkeyActive {
+                    HStack {
+                        Button("Open Input Monitoring") { openPrivacy("Privacy_ListenEvent") }
+                        Button("Open Accessibility") { openPrivacy("Privacy_Accessibility") }
+                    }
+                    Text("Enable Voixful under both, then wait a moment. Press any key: if "
+                         + "“keys detected” stays 0, Input Monitoring isn’t granted yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Models") {
@@ -84,6 +105,12 @@ struct SettingsPane: View {
         Button(title) { env.settings.hotkey = combo }
             .buttonStyle(.borderless)
             .font(.caption2)
+    }
+
+    private func openPrivacy(_ anchor: String) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func chooseModelsDirectory() {

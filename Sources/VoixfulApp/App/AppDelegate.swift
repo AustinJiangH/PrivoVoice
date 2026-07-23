@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let monitor = HotkeyMonitor(settings: env.settings)
         monitor.onPress = { env.dictation.start() }
         monitor.onRelease = { env.dictation.stop() }
+        monitor.onActivity = { env.appState.noteInputEvent() }
+        monitor.onPermissionChange = { [weak self] in self?.updatePermissionStatus() }
         monitor.start()
         self.hotkey = monitor
         updatePermissionStatus()
@@ -48,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updatePermissionStatus() {
         guard let hotkey else { return }
         let appState = AppEnvironment.shared.appState
+        appState.setHotkeyActive(hotkey.isActive && hotkey.canPaste)
         if hotkey.isActive && hotkey.canPaste {
             if appState.lastError?.hasPrefix("Grant ") == true { appState.lastError = nil }
             return
@@ -56,8 +59,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !hotkey.isActive { missing.append("Input Monitoring") }
         if !hotkey.canPaste { missing.append("Accessibility") }
         appState.lastError = "Grant " + missing.joined(separator: " + ")
-            + " to Voixful in System Settings → Privacy & Security. "
-            + "It activates when you switch back to Voixful (relaunch if it doesn't)."
+            + " to Voixful in System Settings → Privacy & Security "
+            + "(it activates automatically within a couple seconds of granting)."
     }
 
     func applicationWillTerminate(_ notification: Notification) {
