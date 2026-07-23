@@ -65,28 +65,30 @@ final class CatalogTests: XCTestCase {
 
 final class KeyComboTests: XCTestCase {
     func testDefaultComboIsFnHold() {
-        // Default is hold-`fn` (modifier-only) — runs on the NSEvent/Accessibility
-        // path, types nothing.
+        // Default is hold-`fn` (modifier-only) — types nothing, and is a valid
+        // global shortcut.
         XCTAssertTrue(KeyCombo.defaultCombo.isModifierOnly)
         XCTAssertTrue(KeyCombo.defaultCombo.modifiers.contains(.function))
         XCTAssertFalse(KeyCombo.defaultCombo.isEmpty)
-        // fn-only is NOT a Carbon-registerable chord (it takes the monitor path).
-        XCTAssertFalse(KeyCombo.defaultCombo.isRegisterableHotkey)
+        XCTAssertTrue(KeyCombo.defaultCombo.isValidGlobalShortcut)
     }
 
     func testEmptyCombo() {
         XCTAssertTrue(KeyCombo(keyCode: nil, modifiers: []).isEmpty)
     }
 
-    func testRegisterableHotkeyRule() {
-        // ⌥Space and a function key are registerable.
-        XCTAssertTrue(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option]).isRegisterableHotkey)
-        XCTAssertTrue(KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: []).isRegisterableHotkey)
-        // fn+Space is NOT (fn has no Carbon modifier → would become bare Space).
-        XCTAssertFalse(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.function]).isRegisterableHotkey)
-        // Bare Space and modifier-only are NOT registerable.
-        XCTAssertFalse(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: []).isRegisterableHotkey)
-        XCTAssertFalse(KeyCombo(keyCode: nil, modifiers: [.option]).isRegisterableHotkey)
+    func testValidGlobalShortcutRule() {
+        // Valid: key+modifier, function key, fn alone, fn+key, multi-modifier.
+        XCTAssertTrue(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option]).isValidGlobalShortcut)
+        XCTAssertTrue(KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: []).isValidGlobalShortcut)
+        XCTAssertTrue(KeyCombo(keyCode: nil, modifiers: [.function]).isValidGlobalShortcut)
+        XCTAssertTrue(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.function]).isValidGlobalShortcut)
+        XCTAssertTrue(KeyCombo(keyCode: nil, modifiers: [.control, .option]).isValidGlobalShortcut)
+        // Invalid: bare printable key (tap would swallow it everywhere), and a
+        // lone common modifier (fires on every press while typing).
+        XCTAssertFalse(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: []).isValidGlobalShortcut)
+        XCTAssertFalse(KeyCombo(keyCode: nil, modifiers: [.shift]).isValidGlobalShortcut)
+        XCTAssertFalse(KeyCombo(keyCode: nil, modifiers: []).isValidGlobalShortcut)
     }
 
     func testCodableRoundTrip() throws {

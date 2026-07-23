@@ -25,12 +25,18 @@ public struct Frame: Sendable, Equatable {
 /// Blocking frame reader over a `FileHandle` (used on a dedicated read thread in
 /// each process). Returns `nil` on clean EOF or a short/garbled stream.
 public enum FrameReader {
+    /// Sanity cap on a single frame's payload (256 MB) — a desynced/garbled
+    /// stream could otherwise encode a bogus 4 GB length and OOM the reader.
+    /// Real frames (audio chunks / short text) are far under this.
+    public static let maxPayload = 256 * 1024 * 1024
+
     public static func read(from handle: FileHandle) -> Frame? {
         guard let header = readExactly(5, from: handle) else { return nil }
         let opcode = header[header.startIndex]
         let length = header.subdata(in: header.startIndex.advanced(by: 1)..<header.startIndex.advanced(by: 5))
             .withUnsafeBytes { UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self)) }
         if length == 0 { return Frame(opcode: opcode, payload: Data()) }
+        guard Int(length) <= maxPayload else { return nil }   // garbled stream
         guard let payload = readExactly(Int(length), from: handle) else { return nil }
         return Frame(opcode: opcode, payload: payload)
     }

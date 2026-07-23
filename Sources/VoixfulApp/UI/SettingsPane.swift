@@ -44,8 +44,8 @@ struct SettingsPane: View {
                         }
                     }
                 }
-                Text("Accessibility powers pasting, and `fn` / bare-key shortcuts. "
-                     + "Modifier+key and function-key shortcuts (⌥Space, F5) need no permission at all.")
+                Text("Accessibility powers the push-to-talk hotkey (any key/chord) and pasting. "
+                     + "No Input Monitoring is needed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -115,8 +115,9 @@ Permissions:
 > trigger, so it never types while you dictate. Default is **hold `fn`**.
 
 > `swift run` works for development (the UI finds the sidecar next to itself in
-> `.build/`). `make-app.sh` ad-hoc signs for local use; for distribution, swap in
-> a Developer ID identity and notarize the bundle.
+> `.build/`). `make-app.sh` signs with the stable self-signed identity from
+> `setup-signing.sh` (see above) so grants persist; for distribution, swap in a
+> Developer ID identity and notarize the bundle.
 
 ## Models
 

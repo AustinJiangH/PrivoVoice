@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # make-app.sh — assemble a real, double-clickable Voixful.app from the SwiftPM
 # build. Bundles BOTH processes (UI + engine sidecar) into Contents/MacOS so the
-# UI can spawn the sidecar as a sibling, writes the Info.plist, and ad-hoc
-# code-signs so microphone + Accessibility grants persist across launches.
+# UI can spawn the sidecar as a sibling, writes the Info.plist, and code-signs
+# with the stable "Voixful Dev" identity (from setup-signing.sh) so Microphone +
+# Accessibility grants persist across rebuilds. Falls back to ad-hoc signing (no
+# persistence) if that identity isn't set up.
 #
 # Usage:  ./scripts/make-app.sh [output-dir]     (default: ./build)
 #
 # The result is a genuine GUI app: no terminal, a menu-bar item, stable TCC
-# identity. For distribution, replace the ad-hoc "-" identity with a Developer
+# identity. For distribution, replace the self-signed identity with a Developer
 # ID and notarize.
 
 set -euo pipefail
@@ -61,7 +63,7 @@ PLIST
 IDENTITY="Voixful Dev"
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
     SIGN_ID="$IDENTITY"
-    echo "[make-app] code-signing with '$IDENTITY' — Input Monitoring / Accessibility grants will persist…"
+    echo "[make-app] code-signing with '$IDENTITY' — Microphone / Accessibility grants will persist…"
 else
     SIGN_ID="-"
     echo "[make-app] '$IDENTITY' not found — ad-hoc signing (you'll re-grant permissions each build)."

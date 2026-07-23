@@ -44,6 +44,9 @@ final class HotkeyMonitor {
 
     /// Install the tap if permission was just granted (called on app focus).
     func refresh() {
+        // Detect Accessibility revoked at runtime: the tap is dead but our flag
+        // says active. Tear it down so it can re-arm and the UI reflects it.
+        if isActive, !AXIsProcessTrusted() { removeTap() }
         installTap()
         scheduleRetry()
         onPermissionChange?()
@@ -127,19 +130,24 @@ final class HotkeyMonitor {
         // Re-enable if the system disabled the tap (slow callback / input storm).
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            // The trigger's key-up may have been missed during the disabled
+            // window — don't strand a held session.
+            if isDown { transition(to: false) }
             return false
         }
 
         let combo = settings.hotkey
-        guard !combo.isEmpty else { return false }
+        guard !combo.isEmpty, combo.isValidGlobalShortcut else { return false }
         let flags = event.flags
 
         if combo.isModifierOnly {
             // fn / modifier-only: fire on the modifier engaging/disengaging.
-            // Don't consume — modifier keys don't type, and swallowing a
-            // flagsChanged would corrupt global modifier state.
+            // Use a subset (not exact) test so tapping another modifier while the
+            // trigger is held doesn't spuriously stop/restart. Don't consume —
+            // modifiers don't type, and swallowing flagsChanged would corrupt
+            // global modifier state.
             if type == .flagsChanged {
-                transition(to: satisfies(flags, combo.modifiers))
+                transition(to: flags.contains(requiredFlags(combo.modifiers)))
             }
             return false
         }

@@ -17,7 +17,17 @@ public actor HelperProcessDictationEngine: DictationEngine {
     private var stdin: FileHandle?
     private var consumeTask: Task<Void, Never>?
     private var onPartial: (@Sendable (String) -> Void)?
+    private var pendingBegin: CheckedContinuation<Void, Error>?
     private var pendingEnd: CheckedContinuation<String, Error>?
+    private var beginTimeout: Task<Void, Never>?
+    private var endTimeout: Task<Void, Never>?
+
+    /// A begin that hasn't acknowledged (`.ready`/`.error`) in this long is
+    /// treated as a hung sidecar. `.begin` only builds the transcriber (the model
+    /// loads later), so this is generous.
+    private let beginTimeoutSeconds: UInt64 = 20
+    /// A finalize that doesn't return in this long is treated as a hang.
+    private let endTimeoutSeconds: UInt64 = 60
 
     public init(helperURL: URL) {
         self.helperURL = helperURL
@@ -31,9 +41,19 @@ public actor HelperProcessDictationEngine: DictationEngine {
     ) async throws {
         try ensureRunning()
         self.onPartial = onPartial
-        send(.begin(
-            modelPath: modelURL.path, backend: backend.rawValue, locale: locale.identifier,
-            sampleRate: format.sampleRate, channels: format.channels))
+        // Await the sidecar's ack so a bad model/backend surfaces as a thrown
+        // error here (not a silent empty transcript later).
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            pendingBegin = c
+            send(.begin(
+                modelPath: modelURL.path, backend: backend.rawValue, locale: locale.identifier,
+                sampleRate: format.sampleRate, channels: format.channels))
+            let seconds = beginTimeoutSeconds
+            beginTimeout = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+                await self?.timedOut(begin: true)
+            }
+        }
     }
 
     public func feed(_ samples: [Float]) {
@@ -45,12 +65,28 @@ public actor HelperProcessDictationEngine: DictationEngine {
         return try await withCheckedThrowingContinuation { continuation in
             pendingEnd = continuation
             send(.end)
+            let seconds = endTimeoutSeconds
+            endTimeout = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+                await self?.timedOut(begin: false)
+            }
         }
     }
 
     public func cancel() {
         send(.cancel)
+        resumeBegin(.failure(HelperError.cancelled))
         resumeEnd(.success(""))
+    }
+
+    /// A pending begin/end didn't get a response in time — fail it and kill the
+    /// sidecar so the next `begin()` respawns a clean one.
+    private func timedOut(begin: Bool) {
+        let stillPending = begin ? (pendingBegin != nil) : (pendingEnd != nil)
+        guard stillPending else { return }
+        if begin { resumeBegin(.failure(HelperError.timeout)) }
+        else { resumeEnd(.failure(HelperError.timeout)) }
+        killProcess()
     }
 
     // MARK: Process lifecycle
@@ -87,20 +123,29 @@ public actor HelperProcessDictationEngine: DictationEngine {
 
     private func handle(_ response: EngineResponse) {
         switch response {
-        case .pong, .ready:
+        case .pong:
             break
+        case .ready:
+            resumeBegin(.success(()))
         case let .partial(text):
             onPartial?(text)
         case let .final(text):
             resumeEnd(.success(text))
         case let .error(message):
-            resumeEnd(.failure(HelperError.engine(message)))
+            // A begin-time failure (bad model) routes to the pending begin; a
+            // finalize failure routes to the pending end.
+            if pendingBegin != nil {
+                resumeBegin(.failure(HelperError.engine(message)))
+            } else {
+                resumeEnd(.failure(HelperError.engine(message)))
+            }
         }
     }
 
-    /// The sidecar exited (crash or clean). Fail any in-flight `end()` and clear
+    /// The sidecar exited (crash or clean). Fail any in-flight begin/end and clear
     /// state so the next `begin()` respawns it.
     private func handleTermination() {
+        resumeBegin(.failure(HelperError.crashed))
         resumeEnd(.failure(HelperError.crashed))
         process = nil
         stdin = nil
@@ -108,12 +153,26 @@ public actor HelperProcessDictationEngine: DictationEngine {
         consumeTask = nil
     }
 
+    private func killProcess() {
+        process?.terminate()
+        process = nil
+        stdin = nil
+    }
+
     private func send(_ request: EngineRequest) {
         guard let stdin else { return }
         try? stdin.write(contentsOf: request.encoded())
     }
 
+    private func resumeBegin(_ result: Result<Void, Error>) {
+        beginTimeout?.cancel(); beginTimeout = nil
+        guard let continuation = pendingBegin else { return }
+        pendingBegin = nil
+        continuation.resume(with: result)
+    }
+
     private func resumeEnd(_ result: Result<String, Error>) {
+        endTimeout?.cancel(); endTimeout = nil
         guard let continuation = pendingEnd else { return }
         pendingEnd = nil
         continuation.resume(with: result)
@@ -121,10 +180,14 @@ public actor HelperProcessDictationEngine: DictationEngine {
 
     enum HelperError: Error, CustomStringConvertible {
         case crashed
+        case timeout
+        case cancelled
         case engine(String)
         var description: String {
             switch self {
             case .crashed: return "The transcription engine process stopped unexpectedly."
+            case .timeout: return "The transcription engine stopped responding."
+            case .cancelled: return "Cancelled."
             case .engine(let m): return m
             }
         }

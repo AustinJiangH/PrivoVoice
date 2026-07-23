@@ -55,8 +55,9 @@ struct ShortcutRecorderView: View {
     private func startRecording() {
         recording = true
         pendingModifiers = []
-        // Capture keys AND modifier changes, so `fn`/modifier-only chords (which
-        // run on the NSEvent/Accessibility path) can be recorded too.
+        // Capture keys AND modifier changes so `fn`/modifier-only chords can be
+        // recorded too. (This local monitor is for recording only; the live
+        // hotkey fires from a CGEventTap.)
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             handle(event)
             return nil   // swallow while recording
@@ -84,19 +85,28 @@ struct ShortcutRecorderView: View {
                 stop()
                 return
             }
-            combo = KeyCombo(
+            let candidate = KeyCombo(
                 keyCode: event.keyCode,
                 keyLabel: Self.label(for: event),
                 modifiers: mods)
+            // Reject a bare printable key — the consuming tap would swallow it
+            // system-wide. Keep recording so the user adds a modifier/function key.
+            guard candidate.isValidGlobalShortcut else { return }
+            combo = candidate
             stop()
 
         case .flagsChanged:
             // Modifiers released with no key pressed → a modifier-only chord
-            // (e.g. hold `fn`). Commit the union of everything held.
+            // (e.g. hold `fn`). Commit the union of everything held, if valid.
             if mods.isEmpty {
                 if !pendingModifiers.isEmpty {
-                    combo = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: pendingModifiers)
-                    stop()
+                    let candidate = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: pendingModifiers)
+                    if candidate.isValidGlobalShortcut {
+                        combo = candidate
+                        stop()
+                    } else {
+                        pendingModifiers = []   // e.g. a lone ⇧ — ignore, keep recording
+                    }
                 }
             } else {
                 pendingModifiers.formUnion(mods)

@@ -29,6 +29,8 @@ public final class DictationController {
         init(capture: AudioCapture) { self.capture = capture }
     }
     private var active: Session?
+    /// True while a released utterance is still finalizing (blocks a new start).
+    private var finalizing = false
 
     public init(
         appState: AppState, settings: AppSettings, store: ModelStore,
@@ -47,9 +49,11 @@ public final class DictationController {
 
     // MARK: Lifecycle
 
-    /// Begin a push-to-talk session (key-down). No-op if one is already running.
+    /// Begin a push-to-talk session (key-down). No-op if one is already running,
+    /// or while the previous utterance is still finalizing — the resident engine
+    /// handles one utterance at a time, so overlapping would corrupt both.
     public func start() {
-        guard active == nil else { return }
+        guard active == nil, !finalizing else { return }
         guard let (spec, url) = resolveModel() else {
             appState.lastError = "Select and install a model in the Models tab first."
             return
@@ -92,9 +96,11 @@ public final class DictationController {
                 return
             }
 
-            // Forward mic audio until the stream ends (stop() ends it).
+            // Forward mic audio until the stream ends. stop() finishes the
+            // stream (via capture.stop()), which drains any buffered tap buffers
+            // first — so we do NOT break on cancellation here, or the last
+            // fraction of a second of audio would be dropped.
             for await input in stream {
-                if Task.isCancelled { break }
                 let (samples, peak) = Self.monoSamples(input.buffer)
                 appState.setLevel(peak)
                 await engine.feed(samples)
@@ -106,6 +112,7 @@ public final class DictationController {
     public func stop() {
         guard let session = active else { return }
         active = nil
+        finalizing = true
         appState.setPhase(.transcribing)
         session.run?.cancel()     // short-circuits a not-yet-capturing session
         session.capture.stop()    // ends the stream so the forwarder drains
@@ -116,6 +123,7 @@ public final class DictationController {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             appState.setPhase(.idle)
             appState.reset()
+            finalizing = false    // now a new press may begin
             // Preserve the previous transcript on a no-speech / failed tap.
             if !final.isEmpty {
                 appState.commitTranscript(final)
@@ -126,6 +134,7 @@ public final class DictationController {
 
     /// Hard-cancel without finalizing (e.g. app quit).
     public func cancel() {
+        finalizing = false
         guard let session = active else { return }
         active = nil
         session.run?.cancel()

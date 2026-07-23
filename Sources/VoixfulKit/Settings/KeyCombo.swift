@@ -56,22 +56,25 @@ public struct KeyCombo: Sendable, Hashable, Codable {
     /// `true` when the chord is triggered purely by modifiers (no key code).
     public var isModifierOnly: Bool { keyCode == nil && !modifiers.isEmpty }
 
-    /// Virtual key codes for F1–F20 — the only keys safe to register as a global
+    /// Virtual key codes for F1–F20 — the only keys safe to use as a global
     /// hotkey with no modifier (they don't collide with normal typing).
     public static let functionKeyCodes: Set<UInt16> = [
         122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111,   // F1–F12
         105, 107, 113, 106, 64, 79, 80, 90,                       // F13–F20
     ]
 
-    /// Whether this chord can be a global hotkey via Carbon `RegisterEventHotKey`:
-    /// it needs a key code, and either a ⌘⌥⌃⇧ modifier (`fn` does NOT count —
-    /// Carbon has no `fn`) or a function key (safe on its own). This is why a
-    /// bare key like Space, or an `fn`-only chord, is rejected — registering it
-    /// would fire on every press of that key.
-    public var isRegisterableHotkey: Bool {
-        guard let keyCode else { return false }
-        let realModifiers = modifiers.subtracting(.function)
-        return !realModifiers.isEmpty || KeyCombo.functionKeyCodes.contains(keyCode)
+    /// Whether this is a safe global push-to-talk shortcut. The consuming tap
+    /// swallows the trigger, so a *bare* printable key would make that key
+    /// untypeable everywhere and toggle dictation on every press — reject those.
+    /// Valid: a key + any modifier (incl `fn`), a function key on its own, `fn`
+    /// alone, or a multi-modifier chord. Invalid: a bare non-function key, or a
+    /// single common modifier (⌘/⌥/⌃/⇧) alone (pressed constantly while typing).
+    public var isValidGlobalShortcut: Bool {
+        if let keyCode {
+            return !modifiers.isEmpty || KeyCombo.functionKeyCodes.contains(keyCode)
+        }
+        guard !modifiers.isEmpty else { return false }
+        return modifiers.contains(.function) || modifiers.rawValue.nonzeroBitCount >= 2
     }
 
     /// Rendered chord, e.g. "⌥⌘Space" or "fn".
@@ -81,9 +84,8 @@ public struct KeyCombo: Sendable, Hashable, Codable {
     }
 
     /// The default: hold the `fn` (Globe) key to talk — a modifier-only chord, so
-    /// nothing types while you dictate. It runs on the NSEvent monitor path,
-    /// which needs only Accessibility (the same grant used to paste), never Input
-    /// Monitoring. Registerable chords like ⌥Space instead use Carbon (zero
-    /// permission, key consumed).
+    /// nothing types while you dictate. Like every shortcut it fires from the
+    /// consuming `CGEventTap`, which needs only Accessibility (the same grant used
+    /// to paste) — never Input Monitoring.
     public static let defaultCombo = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: [.function])
 }

@@ -72,6 +72,14 @@ public final class AppSettings {
             self.localeIdentifier = "en-US"
             self.huggingFaceToken = nil
         }
+
+        // Guard against an unsafe shortcut (e.g. a bare key from an older build)
+        // that the consuming tap would swallow system-wide. Property observers
+        // don't fire during init, so persist explicitly.
+        if !hotkey.isValidGlobalShortcut {
+            hotkey = .defaultCombo
+            saveNow()
+        }
     }
 
     /// Coalesce rapid mutations into one write on the next runloop tick.

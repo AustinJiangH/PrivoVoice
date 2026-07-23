@@ -87,15 +87,22 @@ public final class ModelDownloader {
         states[spec.id] = .installing
         let task = Task { @MainActor in
             defer { self.tasks[spec.id] = nil }
+            let dest = self.store.installURL(for: spec)
+            let staging = self.settings.modelsDirectory
+                .appending(path: spec.assetName + ".partial", directoryHint: .isDirectory)
+            let fm = FileManager.default
             do {
-                let dest = self.store.installURL(for: spec)
-                let fm = FileManager.default
+                // Copy to a staging dir, then swap in — so a failed copy never
+                // deletes the existing asset or leaves a half-copied "installed" one.
                 try fm.createDirectory(at: self.settings.modelsDirectory, withIntermediateDirectories: true)
+                if fm.fileExists(atPath: staging.path) { try fm.removeItem(at: staging) }
+                try fm.copyItem(at: source, to: staging)
                 if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-                try fm.copyItem(at: source, to: dest)
+                try fm.moveItem(at: staging, to: dest)
                 self.states[spec.id] = .installed
                 self.store.refresh()
             } catch {
+                try? fm.removeItem(at: staging)   // don't litter on failure
                 self.states[spec.id] = .failed(Self.friendly(error))
             }
         }
@@ -168,6 +175,8 @@ public final class ModelDownloader {
         try fm.createDirectory(at: settings.modelsDirectory, withIntermediateDirectories: true)
         if fm.fileExists(atPath: staging.path) { try fm.removeItem(at: staging) }
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        // Remove the staging dir on cancel/failure (no-op after the success swap).
+        defer { try? fm.removeItem(at: staging) }
 
         var downloaded: Int64 = 0
         for file in files {
