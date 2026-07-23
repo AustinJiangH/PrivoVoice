@@ -23,15 +23,12 @@ you're using. Everything runs **100% on-device** on Apple Silicon through Apple'
 Core AI runtime, powered by the [**Voixful**](https://github.com/AustinJiangH/voixful)
 speech engine.
 
+```mermaid
+flowchart LR
+    A["⌥ Hold shortcut"] --> B["🎤 Speak"] --> C["⌥ Release"] --> D["⌨️ Pasted at your cursor"]
 ```
-       ⌥ hold             🎤 speak            ⌥ release          ⌨️ pasted
-   ┌───────────┐     ┌───────────┐      ┌───────────┐     ┌──────────────┐
-   │  fn / ⌥…  │ ──▶ │ "send the │  ──▶ │  finalize │ ──▶ │ Send the doc │
-   │           │     │  doc now" │      │           │     │ now▮         │
-   └───────────┘     └───────────┘      └───────────┘     └──────────────┘
-    nothing leaves      live amplitude      on-device          right where
-    your Mac            HUD                 transcription       your cursor is
-```
+
+*Nothing leaves your Mac — capture, transcription, and paste all happen on-device.*
 
 ## ✨ Why PrivoVoice
 
@@ -48,17 +45,20 @@ speech engine.
 Pick a model in the **Models** tab and it downloads on-device. All are Apple
 Core AI (Palette4) conversions, published on Hugging Face:
 
-| Model | Best for | Languages | Streaming | Weights |
-|---|---|---|---|---|
-| [**Nemotron Streaming**](https://huggingface.co/AustinJiangH/voixful-nemotron-speech-streaming-en-0.6b) | Lowest-latency dictation (words appear as you speak) | English | ✅ live | NVIDIA Open Model |
-| [**Parakeet TDT v2**](https://huggingface.co/AustinJiangH/voixful-parakeet-tdt-0.6b-v2) | Smallest, fastest, best English accuracy | English | — | CC-BY-4.0 |
-| [**Parakeet TDT v3**](https://huggingface.co/AustinJiangH/voixful-parakeet-tdt-0.6b-v3) | Multilingual | 25 European | — | CC-BY-4.0 |
-| [**Granite Speech NAR**](https://huggingface.co/AustinJiangH/voixful-granite-speech-4.1-2b-nar) | Most accurate overall | en · fr · de · es · pt | — | Apache-2.0 |
-| [**Canary-Qwen**](https://huggingface.co/AustinJiangH/voixful-canary-qwen-2.5b) | Best punctuation & casing | English | — | CC-BY-4.0 |
+- 🟢 **[Nemotron Streaming](https://huggingface.co/AustinJiangH/voixful-nemotron-speech-streaming-en-0.6b)** — English · *streams live* · NVIDIA Open Model
+  Lowest-latency dictation — words appear *while* you speak.
+- 🐦 **[Parakeet TDT v2](https://huggingface.co/AustinJiangH/voixful-parakeet-tdt-0.6b-v2)** — English · CC-BY-4.0
+  Smallest and fastest, with the best English accuracy of the small tier.
+- 🌍 **[Parakeet TDT v3](https://huggingface.co/AustinJiangH/voixful-parakeet-tdt-0.6b-v3)** — 25 European languages · CC-BY-4.0
+  Multilingual, still fast.
+- 🎯 **[Granite Speech NAR](https://huggingface.co/AustinJiangH/voixful-granite-speech-4.1-2b-nar)** — en · fr · de · es · pt · Apache-2.0
+  The most accurate overall.
+- ✍️ **[Canary-Qwen](https://huggingface.co/AustinJiangH/voixful-canary-qwen-2.5b)** — English · CC-BY-4.0
+  The best punctuation and casing.
 
-> Only Nemotron streams natively (words appear *while* you speak); the others
-> re-transcribe the growing utterance for live partials. Each card in the app
-> shows speed, accuracy, size, and language support at a glance.
+> Only Nemotron streams natively; the others re-transcribe the growing utterance
+> for live partials. Each card in the app shows speed, accuracy, size, and
+> language support at a glance.
 
 ## 🚀 Quick start
 
@@ -120,14 +120,12 @@ Local dev only; use a Developer ID + notarization to distribute.
 Two processes, so a crash or hang in the (beta) Core AI runtime can't take the UI
 down — the native equivalent of how Handy isolates its Rust core:
 
-```
-┌─────────────────────────┐  stdio frames   ┌──────────────────────────┐
-│ PrivoVoice (UI process) │  begin/audio →  │ PrivoVoiceHelper (engine)│
-│  menu bar · hotkey ·    │  ← partial/final│  loads the .aimodel and  │
-│  mic · HUD · paste      │                 │  drives Voixful          │
-└─────────────────────────┘                 └──────────────────────────┘
-     holds mic + Accessibility                  no TCC permissions —
-                                                just audio in, text out
+```mermaid
+flowchart LR
+    UI["🖥️ PrivoVoice · UI process<br/>menu bar · hotkey · mic · HUD · paste<br/><i>holds Mic + Accessibility</i>"]
+    ENG["⚙️ PrivoVoiceHelper · engine process<br/>loads the .aimodel · drives Voixful<br/><i>no permissions — audio in, text out</i>"]
+    UI -->|"begin / audio frames →"| ENG
+    ENG -->|"← partial / final text"| UI
 ```
 
 <details>
@@ -135,12 +133,10 @@ down — the native equivalent of how Handy isolates its Rust core:
 
 The app splits into portable and macOS-only pieces so the non-UI logic could power a future iOS app too:
 
-| Target | Platform | Contents |
-|---|---|---|
-| `PrivoVoiceKit` | portable | Model catalog, download/store, settings, `AudioCapture`, `DictationController`, the `DictationEngine` protocol + in-process engine. No AppKit/SwiftUI. |
-| `PrivoVoiceIPC` | portable | The tiny stdio wire protocol shared by both processes. |
-| `PrivoVoiceApp` | macOS | SwiftUI UI (Settings + Models), HUD, menu bar, hotkey, paste, and the sidecar-spawning engine. |
-| `PrivoVoiceHelper` | macOS | The resident engine process (the sidecar). |
+- **`PrivoVoiceKit`** *(portable)* — model catalog, download/store, settings, `AudioCapture`, `DictationController`, and the `DictationEngine` protocol + in-process engine. No AppKit/SwiftUI.
+- **`PrivoVoiceIPC`** *(portable)* — the tiny stdio wire protocol shared by both processes.
+- **`PrivoVoiceApp`** *(macOS)* — SwiftUI UI (Settings + Models), HUD, menu bar, hotkey, paste, and the sidecar-spawning engine.
+- **`PrivoVoiceHelper`** *(macOS)* — the resident engine process (the sidecar).
 
 The split hides behind the `DictationEngine` protocol: macOS injects the sidecar;
 a future iOS app reuses `PrivoVoiceKit` with the in-process engine instead — no
