@@ -38,16 +38,15 @@ public final class AppState {
     /// A user-facing error from the last session, if any.
     public var lastError: String?
 
-    /// Push-to-talk tap is installed and paste is permitted (both TCC grants).
+    /// The global push-to-talk hotkey is registered with the system.
     public private(set) var hotkeyActive = false
-    /// Count of global key events the tap has seen — a live diagnostic: if this
-    /// stays 0 while you type, Input Monitoring isn't actually granted.
-    public private(set) var inputEventsSeen = 0
+    /// Accessibility is granted — needed only to paste the transcript.
+    public private(set) var pasteAuthorized = false
 
     public init() {}
 
     public func setHotkeyActive(_ v: Bool) { hotkeyActive = v }
-    public func noteInputEvent() { inputEventsSeen &+= 1 }
+    public func setPasteAuthorized(_ v: Bool) { pasteAuthorized = v }
 
     // Mutators are funnelled through the controller; kept internal to the module.
     func setPhase(_ p: DictationPhase) { phase = p }

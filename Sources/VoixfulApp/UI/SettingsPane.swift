@@ -17,38 +17,36 @@ struct SettingsPane: View {
                         ShortcutRecorderView(combo: $settings.hotkey)
                         HStack(spacing: 6) {
                             Text("Presets:").font(.caption2).foregroundStyle(.secondary)
-                            presetButton("fn", KeyCombo(keyCode: nil, modifiers: [.function]))
-                            presetButton("F5", KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: []))
                             presetButton("⌥Space", KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option]))
+                            presetButton("⌃⌥Space", KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.control, .option]))
+                            presetButton("F5", KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: []))
                         }
                     }
                 }
-                Text("Hold the key to record; release to transcribe and paste at the cursor.")
+                Text("Hold the shortcut to record; release to transcribe and paste at the cursor. "
+                     + "It must include a key (a bare modifier like fn can't be used).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 Toggle("Copy transcript to clipboard automatically", isOn: $settings.autoCopy)
 
-                LabeledContent("Hotkey status") {
+                LabeledContent("Hotkey") {
+                    statusRow(ok: env.appState.hotkeyActive,
+                              okText: "Registered", badText: "Not registered")
+                }
+                LabeledContent("Paste (Accessibility)") {
                     HStack(spacing: 6) {
-                        Circle()
-                            .fill(env.appState.hotkeyActive ? Color.green : Color.orange)
-                            .frame(width: 8, height: 8)
-                        Text(env.appState.hotkeyActive ? "Active" : "Waiting for permission")
-                        Text("· keys detected: \(env.appState.inputEventsSeen)")
-                            .foregroundStyle(.secondary)
+                        statusRow(ok: env.appState.pasteAuthorized,
+                                  okText: "Granted", badText: "Not granted")
+                        if !env.appState.pasteAuthorized {
+                            Button("Open Accessibility") { openPrivacy("Privacy_Accessibility") }
+                        }
                     }
                 }
-                if !env.appState.hotkeyActive {
-                    HStack {
-                        Button("Open Input Monitoring") { openPrivacy("Privacy_ListenEvent") }
-                        Button("Open Accessibility") { openPrivacy("Privacy_Accessibility") }
-                    }
-                    Text("Enable Voixful under both, then wait a moment. Press any key: if "
-                         + "“keys detected” stays 0, Input Monitoring isn’t granted yet.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("No Input Monitoring needed — the shortcut is a system hotkey. "
+                     + "Accessibility is used only to paste the transcript.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Models") {
@@ -105,6 +103,15 @@ struct SettingsPane: View {
         Button(title) { env.settings.hotkey = combo }
             .buttonStyle(.borderless)
             .font(.caption2)
+    }
+
+    private func statusRow(ok: Bool, okText: String, badText: String) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(ok ? Color.green : Color.orange)
+                .frame(width: 8, height: 8)
+            Text(ok ? okText : badText)
+        }
     }
 
     private func openPrivacy(_ anchor: String) {

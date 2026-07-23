@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # setup-signing.sh — create a stable, self-signed "Voixful Dev" code-signing
-# identity so macOS TCC permissions (Input Monitoring, Accessibility, Microphone)
-# PERSIST across rebuilds.
+# identity so macOS TCC permissions (Microphone, Accessibility) PERSIST across
+# rebuilds.
 #
 # Why: ad-hoc signing (`codesign -s -`) produces a different signature every
 # build, so TCC treats each rebuild as a new app and your granted permissions

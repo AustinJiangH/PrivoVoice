@@ -10,7 +10,7 @@ Apple Core AI; no audio leaves your Mac.
 
 ## What it does
 
-- **Push-to-talk dictation.** Hold the configured key (default: `fn`), speak,
+- **Push-to-talk dictation.** Hold the configured shortcut (default: `⌥Space`), speak,
   release. The finished transcript is pasted at the cursor, optionally copied to
   the clipboard.
 - **Floating HUD.** A small top-center overlay shows an amplitude meter while
@@ -88,24 +88,29 @@ For a real, double-clickable GUI app (menu-bar item, stable permissions):
 
 ```bash
 ./scripts/setup-signing.sh  # ONCE: create a stable self-signed identity so TCC
-                            # grants (Input Monitoring/Accessibility) persist
+                            # grants (Microphone/Accessibility) persist
 ./scripts/make-app.sh       # → build/Voixful.app  (bundles both binaries, signs)
 open build/Voixful.app
 ```
 
 > **Run `setup-signing.sh` once.** Without it, `make-app.sh` falls back to ad-hoc
 > signing, which changes the app's identity every build — so macOS forgets your
-> Input Monitoring / Accessibility grants and push-to-talk silently stops working
+> Microphone / Accessibility grants and dictation silently stops working
 > after each rebuild. The self-signed "Voixful Dev" identity keeps one stable
 > signature (needs Homebrew `openssl@3`; the first `codesign` shows one keychain
 > prompt — click **Always Allow**). Local dev only; use a Developer ID to
 > distribute.
 
-The first launch prompts for two permissions — grant both, then **relaunch**:
+Permissions:
 
 1. **Microphone** — to capture your speech.
-2. **Accessibility** (and **Input Monitoring** if separately prompted) — for the
-   global push-to-talk hotkey and paste-at-cursor.
+2. **Accessibility** — used *only* to paste the transcript at the cursor.
+
+> **No Input Monitoring required.** The push-to-talk shortcut is registered as a
+> system hotkey via Carbon `RegisterEventHotKey` (the same approach Handy uses),
+> so it needs no keyboard-tap permission and the trigger chord is consumed (it
+> won't type while you dictate). The tradeoff: the shortcut must be a key +
+> modifiers (e.g. ⌥Space) — a bare modifier like `fn` can't be registered.
 
 > `swift run` works for development (the UI finds the sidecar next to itself in
 > `.build/`). `make-app.sh` ad-hoc signs for local use; for distribution, swap in
@@ -125,9 +130,9 @@ and the weights license.
 
 ## Notes & limitations
 
-- The push-to-talk tap is **listen-only** (it never swallows the key), so a
-  *printable* trigger key would also type. Prefer the default `fn`, an F-key, or
-  a modifier chord.
+- The push-to-talk shortcut is a **Carbon system hotkey** — no Input Monitoring,
+  and the chord is consumed (won't type). It must be a key + modifiers (default
+  ⌥Space); bare-modifier triggers like `fn` aren't supported.
 - Native streaming (live words) is Nemotron only; every other backend
   re-transcribes the growing utterance for live partials (see the root README's
   support matrix).

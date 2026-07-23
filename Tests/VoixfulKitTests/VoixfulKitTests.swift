@@ -64,8 +64,11 @@ final class CatalogTests: XCTestCase {
 }
 
 final class KeyComboTests: XCTestCase {
-    func testDefaultComboIsModifierOnly() {
-        XCTAssertTrue(KeyCombo.defaultCombo.isModifierOnly)
+    func testDefaultComboIsRegisterable() {
+        // Carbon RegisterEventHotKey needs a key code, not a bare modifier.
+        XCTAssertNotNil(KeyCombo.defaultCombo.keyCode)
+        XCTAssertFalse(KeyCombo.defaultCombo.modifiers.isEmpty)
+        XCTAssertFalse(KeyCombo.defaultCombo.isModifierOnly)
         XCTAssertFalse(KeyCombo.defaultCombo.isEmpty)
     }
 

@@ -62,7 +62,10 @@ public struct KeyCombo: Sendable, Hashable, Codable {
         return modifiers.displayString + (keyLabel ?? "")
     }
 
-    /// The default: hold the `fn` (globe) key to talk. Modifier-only chords make
-    /// forgiving push-to-talk triggers — nothing to chord, just press and hold.
-    public static let defaultCombo = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: [.function])
+    /// The default: hold ⌥Space to talk. A key+modifier chord (not a bare
+    /// modifier) because the global hotkey is registered via Carbon's
+    /// `RegisterEventHotKey`, which needs a key code and can't bind `fn` alone —
+    /// the upside is it needs no Input Monitoring permission and the chord is
+    /// consumed (so Space doesn't type while you dictate).
+    public static let defaultCombo = KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option])
 }

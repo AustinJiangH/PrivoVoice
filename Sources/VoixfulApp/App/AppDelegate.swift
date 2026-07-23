@@ -4,6 +4,7 @@
 
 import AppKit
 import SwiftUI
+import Observation
 import VoixfulKit
 
 @MainActor
@@ -30,10 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let monitor = HotkeyMonitor(settings: env.settings)
         monitor.onPress = { env.dictation.start() }
         monitor.onRelease = { env.dictation.stop() }
-        monitor.onActivity = { env.appState.noteInputEvent() }
         monitor.onPermissionChange = { [weak self] in self?.updatePermissionStatus() }
         monitor.start()
         self.hotkey = monitor
+        observeHotkeyChanges()
         updatePermissionStatus()
     }
 
@@ -41,26 +42,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Re-scan so a model copied into the folder while we were in the
         // background shows up without a relaunch.
         AppEnvironment.shared.store.refresh()
-        // Install the hotkey tap if the user just granted permission.
-        hotkey?.retry()
+        // Re-check the paste (Accessibility) permission after a Settings visit.
+        hotkey?.refresh()
         updatePermissionStatus()
     }
 
-    /// Reflect the exact missing permission(s) in the UI, or clear our message.
+    /// Re-register the Carbon hotkey whenever the user changes the shortcut.
+    private func observeHotkeyChanges() {
+        let settings = AppEnvironment.shared.settings
+        withObservationTracking {
+            _ = settings.hotkey
+        } onChange: {
+            Task { @MainActor in
+                self.hotkey?.refresh()
+                self.updatePermissionStatus()
+                self.observeHotkeyChanges()
+            }
+        }
+    }
+
+    /// Reflect hotkey registration + paste permission in the UI.
     private func updatePermissionStatus() {
         guard let hotkey else { return }
         let appState = AppEnvironment.shared.appState
-        appState.setHotkeyActive(hotkey.isActive && hotkey.canPaste)
-        if hotkey.isActive && hotkey.canPaste {
-            if appState.lastError?.hasPrefix("Grant ") == true { appState.lastError = nil }
-            return
+        appState.setHotkeyActive(hotkey.isActive)
+        appState.setPasteAuthorized(hotkey.canPaste)
+        if !hotkey.isActive {
+            appState.lastError = "Couldn't register the push-to-talk shortcut — pick a "
+                + "key + modifier combo in Settings (a bare modifier like fn can't be used)."
+        } else if !hotkey.canPaste {
+            appState.lastError = "Grant Accessibility to Voixful in System Settings → Privacy "
+                + "& Security so the transcript can be pasted at the cursor."
+        } else if appState.lastError?.hasPrefix("Grant ") == true
+                    || appState.lastError?.hasPrefix("Couldn't") == true {
+            appState.lastError = nil
         }
-        var missing: [String] = []
-        if !hotkey.isActive { missing.append("Input Monitoring") }
-        if !hotkey.canPaste { missing.append("Accessibility") }
-        appState.lastError = "Grant " + missing.joined(separator: " + ")
-            + " to Voixful in System Settings → Privacy & Security "
-            + "(it activates automatically within a couple seconds of granting)."
     }
 
     func applicationWillTerminate(_ notification: Notification) {

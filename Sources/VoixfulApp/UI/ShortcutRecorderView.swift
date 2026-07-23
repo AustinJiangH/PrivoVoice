@@ -15,7 +15,6 @@ struct ShortcutRecorderView: View {
 
     @State private var recording = false
     @State private var monitor: Any?
-    @State private var pendingModifiers: KeyModifiers = []
 
     var body: some View {
         HStack(spacing: 6) {
@@ -54,8 +53,9 @@ struct ShortcutRecorderView: View {
 
     private func startRecording() {
         recording = true
-        pendingModifiers = []
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+        // Only key-down: the global hotkey is registered via Carbon, which needs
+        // a key code (plus optional ⌘⌥⌃⇧). Pure-modifier chords aren't captured.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
             handle(event)
             return nil   // swallow while recording
         }
@@ -63,48 +63,28 @@ struct ShortcutRecorderView: View {
 
     private func stop() {
         recording = false
-        pendingModifiers = []
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
     }
 
     private func handle(_ event: NSEvent) {
-        let mods = Self.modifiers(from: event.modifierFlags)
-
-        switch event.type {
-        case .keyDown:
-            if event.keyCode == 53 {   // Escape cancels
-                stop()
-                return
-            }
-            if event.keyCode == 51 && mods.isEmpty {   // Delete clears
-                combo = KeyCombo(keyCode: nil, modifiers: [])
-                stop()
-                return
-            }
-            combo = KeyCombo(
-                keyCode: event.keyCode,
-                keyLabel: Self.label(for: event),
-                modifiers: mods)
+        if event.keyCode == 53 {   // Escape cancels
             stop()
-
-        case .flagsChanged:
-            if mods.isEmpty {
-                // Modifiers just released with no key pressed → modifier-only chord.
-                // Commit the union of everything held during the gesture, so a
-                // multi-modifier chord (⌘⌥) isn't reduced to whatever was released
-                // last.
-                if !pendingModifiers.isEmpty {
-                    combo = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: pendingModifiers)
-                    stop()
-                }
-            } else {
-                pendingModifiers.formUnion(mods)
-            }
-
-        default:
-            break
+            return
         }
+        var mods = Self.modifiers(from: event.modifierFlags)
+        if event.keyCode == 51 && mods.isEmpty {   // Delete clears
+            combo = KeyCombo(keyCode: nil, modifiers: [])
+            stop()
+            return
+        }
+        // `fn` has no Carbon equivalent and can't be part of a registered hotkey.
+        mods.remove(.function)
+        combo = KeyCombo(
+            keyCode: event.keyCode,
+            keyLabel: Self.label(for: event),
+            modifiers: mods)
+        stop()
     }
 
     // MARK: Mapping
