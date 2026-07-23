@@ -80,10 +80,10 @@ public struct KeyCombo: Sendable, Hashable, Codable {
         return modifiers.displayString + (keyLabel ?? "")
     }
 
-    /// The default: hold ⌥Space to talk. A key+modifier chord (not a bare
-    /// modifier) because the global hotkey is registered via Carbon's
-    /// `RegisterEventHotKey`, which needs a key code and can't bind `fn` alone —
-    /// the upside is it needs no Input Monitoring permission and the chord is
-    /// consumed (so Space doesn't type while you dictate).
-    public static let defaultCombo = KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option])
+    /// The default: hold the `fn` (Globe) key to talk — a modifier-only chord, so
+    /// nothing types while you dictate. It runs on the NSEvent monitor path,
+    /// which needs only Accessibility (the same grant used to paste), never Input
+    /// Monitoring. Registerable chords like ⌥Space instead use Carbon (zero
+    /// permission, key consumed).
+    public static let defaultCombo = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: [.function])
 }

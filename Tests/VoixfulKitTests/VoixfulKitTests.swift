@@ -64,12 +64,14 @@ final class CatalogTests: XCTestCase {
 }
 
 final class KeyComboTests: XCTestCase {
-    func testDefaultComboIsRegisterable() {
-        // Carbon RegisterEventHotKey needs a key code, not a bare modifier.
-        XCTAssertNotNil(KeyCombo.defaultCombo.keyCode)
-        XCTAssertFalse(KeyCombo.defaultCombo.modifiers.isEmpty)
-        XCTAssertFalse(KeyCombo.defaultCombo.isModifierOnly)
+    func testDefaultComboIsFnHold() {
+        // Default is hold-`fn` (modifier-only) — runs on the NSEvent/Accessibility
+        // path, types nothing.
+        XCTAssertTrue(KeyCombo.defaultCombo.isModifierOnly)
+        XCTAssertTrue(KeyCombo.defaultCombo.modifiers.contains(.function))
         XCTAssertFalse(KeyCombo.defaultCombo.isEmpty)
+        // fn-only is NOT a Carbon-registerable chord (it takes the monitor path).
+        XCTAssertFalse(KeyCombo.defaultCombo.isRegisterableHotkey)
     }
 
     func testEmptyCombo() {
@@ -85,8 +87,6 @@ final class KeyComboTests: XCTestCase {
         // Bare Space and modifier-only are NOT registerable.
         XCTAssertFalse(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: []).isRegisterableHotkey)
         XCTAssertFalse(KeyCombo(keyCode: nil, modifiers: [.option]).isRegisterableHotkey)
-        // The default must be registerable.
-        XCTAssertTrue(KeyCombo.defaultCombo.isRegisterableHotkey)
     }
 
     func testCodableRoundTrip() throws {

@@ -15,6 +15,7 @@ struct ShortcutRecorderView: View {
 
     @State private var recording = false
     @State private var monitor: Any?
+    @State private var pendingModifiers: KeyModifiers = []
 
     var body: some View {
         HStack(spacing: 6) {
@@ -53,9 +54,10 @@ struct ShortcutRecorderView: View {
 
     private func startRecording() {
         recording = true
-        // Only key-down: the global hotkey is registered via Carbon, which needs
-        // a key code (plus optional ⌘⌥⌃⇧). Pure-modifier chords aren't captured.
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+        pendingModifiers = []
+        // Capture keys AND modifier changes, so `fn`/modifier-only chords (which
+        // run on the NSEvent/Accessibility path) can be recorded too.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             handle(event)
             return nil   // swallow while recording
         }
@@ -63,33 +65,46 @@ struct ShortcutRecorderView: View {
 
     private func stop() {
         recording = false
+        pendingModifiers = []
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
     }
 
     private func handle(_ event: NSEvent) {
-        if event.keyCode == 53 {   // Escape cancels
+        let mods = Self.modifiers(from: event.modifierFlags)
+
+        switch event.type {
+        case .keyDown:
+            if event.keyCode == 53 {   // Escape cancels
+                stop()
+                return
+            }
+            if event.keyCode == 51 && mods.isEmpty {   // Delete clears
+                combo = KeyCombo(keyCode: nil, modifiers: [])
+                stop()
+                return
+            }
+            combo = KeyCombo(
+                keyCode: event.keyCode,
+                keyLabel: Self.label(for: event),
+                modifiers: mods)
             stop()
-            return
+
+        case .flagsChanged:
+            // Modifiers released with no key pressed → a modifier-only chord
+            // (e.g. hold `fn`). Commit the union of everything held.
+            if mods.isEmpty {
+                if !pendingModifiers.isEmpty {
+                    combo = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: pendingModifiers)
+                    stop()
+                }
+            } else {
+                pendingModifiers.formUnion(mods)
+            }
+
+        default:
+            break
         }
-        var mods = Self.modifiers(from: event.modifierFlags)
-        if event.keyCode == 51 && mods.isEmpty {   // Delete clears
-            combo = KeyCombo(keyCode: nil, modifiers: [])
-            stop()
-            return
-        }
-        // `fn` has no Carbon equivalent and can't be part of a registered hotkey.
-        mods.remove(.function)
-        let candidate = KeyCombo(
-            keyCode: event.keyCode,
-            keyLabel: Self.label(for: event),
-            modifiers: mods)
-        // Only accept a chord that can actually be registered — a modifier + key
-        // (e.g. ⌥Space) or a function key. A bare key like Space is ignored so we
-        // don't bind a hotkey that fires on every keystroke.
-        guard candidate.isRegisterableHotkey else { return }
-        combo = candidate
-        stop()
     }
 
     // MARK: Mapping

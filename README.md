@@ -10,7 +10,7 @@ Apple Core AI; no audio leaves your Mac.
 
 ## What it does
 
-- **Push-to-talk dictation.** Hold the configured shortcut (default: `⌥Space`), speak,
+- **Push-to-talk dictation.** Hold the configured shortcut (default: `fn`), speak,
   release. The finished transcript is pasted at the cursor, optionally copied to
   the clipboard.
 - **Floating HUD.** A small top-center overlay shows an amplitude meter while
@@ -104,13 +104,19 @@ open build/Voixful.app
 Permissions:
 
 1. **Microphone** — to capture your speech.
-2. **Accessibility** — used *only* to paste the transcript at the cursor.
+2. **Accessibility** — to paste the transcript, and for `fn` / bare-key shortcuts.
 
-> **No Input Monitoring required.** The push-to-talk shortcut is registered as a
-> system hotkey via Carbon `RegisterEventHotKey` (the same approach Handy uses),
-> so it needs no keyboard-tap permission and the trigger chord is consumed (it
-> won't type while you dictate). The tradeoff: the shortcut must be a key +
-> modifiers (e.g. ⌥Space) — a bare modifier like `fn` can't be registered.
+> **No Input Monitoring, ever.** The hotkey is hybrid:
+> - **Registerable chords** (a key + ⌘⌥⌃⇧, or a function key like ⌥Space / F5)
+>   use Carbon `RegisterEventHotKey` — **zero permissions**, and the chord is
+>   consumed (it won't type).
+> - **`fn`, modifier-only, and bare-key** shortcuts use an `NSEvent` global
+>   monitor, which needs only **Accessibility** — the same grant used to paste,
+>   the way Wispr Flow does its default `fn` push-to-talk.
+>
+> Default is **hold `fn`** (types nothing). The `NSEvent` path is listen-only, so
+> a *printable* trigger key (e.g. the Space in `fn`+Space) also types — prefer
+> `fn` alone, a function key, or a Carbon chord to avoid that.
 
 > `swift run` works for development (the UI finds the sidecar next to itself in
 > `.build/`). `make-app.sh` ad-hoc signs for local use; for distribution, swap in
@@ -130,9 +136,10 @@ and the weights license.
 
 ## Notes & limitations
 
-- The push-to-talk shortcut is a **Carbon system hotkey** — no Input Monitoring,
-  and the chord is consumed (won't type). It must be a key + modifiers (default
-  ⌥Space); bare-modifier triggers like `fn` aren't supported.
+- The push-to-talk hotkey is **hybrid** — Carbon (zero permission, consumed) for
+  key+modifier / function-key chords, and an `NSEvent` monitor (Accessibility, no
+  Input Monitoring) for `fn` / bare keys. Any shortcut works; `fn` alone is the
+  cleanest since nothing types.
 - Native streaming (live words) is Nemotron only; every other backend
   re-transcribes the growing utterance for live partials (see the root README's
   support matrix).

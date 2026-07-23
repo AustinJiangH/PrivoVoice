@@ -67,12 +67,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appState = AppEnvironment.shared.appState
         appState.setHotkeyActive(hotkey.isActive)
         appState.setPasteAuthorized(hotkey.canPaste)
-        if !hotkey.isActive {
-            appState.lastError = "Couldn't register the push-to-talk shortcut — pick a "
-                + "key + modifier combo in Settings (a bare modifier like fn can't be used)."
-        } else if !hotkey.canPaste {
+        if !hotkey.isActive && !hotkey.canPaste {
+            // An fn / bare-key shortcut on the NSEvent path needs Accessibility.
             appState.lastError = "Grant Accessibility to Voixful in System Settings → Privacy "
-                + "& Security so the transcript can be pasted at the cursor."
+                + "& Security to enable the fn shortcut and pasting (no Input Monitoring needed)."
+        } else if !hotkey.isActive {
+            appState.lastError = "Couldn't arm the shortcut — try a different key or chord in Settings."
+        } else if !hotkey.canPaste {
+            appState.lastError = "Grant Accessibility so the transcript can be pasted at the cursor."
         } else if appState.lastError?.hasPrefix("Grant ") == true
                     || appState.lastError?.hasPrefix("Couldn't") == true {
             appState.lastError = nil

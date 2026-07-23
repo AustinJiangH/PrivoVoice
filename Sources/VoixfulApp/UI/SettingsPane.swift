@@ -17,15 +17,15 @@ struct SettingsPane: View {
                         ShortcutRecorderView(combo: $settings.hotkey)
                         HStack(spacing: 6) {
                             Text("Presets:").font(.caption2).foregroundStyle(.secondary)
+                            presetButton("fn", KeyCombo(keyCode: nil, modifiers: [.function]))
                             presetButton("⌥Space", KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option]))
-                            presetButton("⌃⌥Space", KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.control, .option]))
                             presetButton("F5", KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: []))
                         }
                     }
                 }
-                Text("Hold the shortcut to record; release to transcribe and paste at the cursor. "
-                     + "Use a modifier + key (e.g. ⌥Space) or a function key — a bare key or "
-                     + "fn alone can't be a global hotkey.")
+                Text("Hold the shortcut to record; release to transcribe and paste. Any key or "
+                     + "chord works — `fn` alone is cleanest (nothing types). No Input Monitoring "
+                     + "needed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -33,9 +33,9 @@ struct SettingsPane: View {
 
                 LabeledContent("Hotkey") {
                     statusRow(ok: env.appState.hotkeyActive,
-                              okText: "Registered", badText: "Not registered")
+                              okText: "Active", badText: "Inactive")
                 }
-                LabeledContent("Paste (Accessibility)") {
+                LabeledContent("Accessibility") {
                     HStack(spacing: 6) {
                         statusRow(ok: env.appState.pasteAuthorized,
                                   okText: "Granted", badText: "Not granted")
@@ -44,8 +44,8 @@ struct SettingsPane: View {
                         }
                     }
                 }
-                Text("No Input Monitoring needed — the shortcut is a system hotkey. "
-                     + "Accessibility is used only to paste the transcript.")
+                Text("Accessibility powers pasting, and `fn` / bare-key shortcuts. "
+                     + "Modifier+key and function-key shortcuts (⌥Space, F5) need no permission at all.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
