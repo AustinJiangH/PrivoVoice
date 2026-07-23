@@ -164,23 +164,9 @@ public enum ModelCatalog {
             summary: "Best accuracy we ship; strong live + file balance. No decode loop.",
             download: .huggingFace(repo: "\(hfOrg)/voixful-granite-speech-4.1-2b-nar", revision: "main")
         ),
-        ModelSpec(
-            id: "cohere-transcribe-03-2026",
-            displayName: "Cohere Transcribe",
-            backend: .cohere,
-            upstreamRepo: "CohereLabs/cohere-transcribe-03-2026",
-            assetName: "cohere-transcribe-03-2026-palette4.aimodel",
-            parameters: "2 B",
-            approxSizeMB: 2100,
-            languages: ["en", "de", "fr", "es", "it", "pt", "nl", "ja", "ko", "zh", "ar", "ru", "hi", "tr"].map(LanguageTag.init),
-            streaming: false,
-            speed: .good,
-            accuracy: .good,
-            weightsLicense: "upstream (gated)",
-            werLeaderboard: 5.20,
-            summary: "14 languages via an attention encoder-decoder.",
-            download: .huggingFace(repo: "\(hfOrg)/voixful-cohere-transcribe-03-2026", revision: "main")
-        ),
+        // Cohere Transcribe is intentionally NOT listed: the upstream checkpoint
+        // is access-gated by CohereLabs, so we don't redistribute it. The engine
+        // backend still exists in the core for locally-imported assets.
         ModelSpec(
             id: "canary-qwen-2.5b",
             displayName: "Canary-Qwen",
