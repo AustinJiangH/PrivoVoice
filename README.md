@@ -1,12 +1,12 @@
 # PrivoVoice for macOS
 
-A push-to-talk dictation app for Apple Silicon, built entirely on the Voixful
-core API (the package one directory up). Hold a key, speak, release — the
-transcript is pasted wherever your cursor is. Everything runs on-device via
-Apple Core AI; no audio leaves your Mac.
+A push-to-talk dictation app for Apple Silicon, built on the [Voixful](https://github.com/AustinJiangH/voixful)
+speech engine (a sibling package). Hold a key, speak, release — the transcript
+is pasted wherever your cursor is. Everything runs on-device via Apple Core AI;
+no audio leaves your Mac.
 
-> Code here is Apache-2.0 (repo root `LICENSE`). Model **weights** carry their
-> upstream licenses — see [`../MODEL_CARD.md`](../MODEL_CARD.md).
+> App code here is Apache-2.0 (see [`LICENSE`](LICENSE)). Model **weights** carry
+> their upstream licenses — see the Voixful engine's `MODEL_CARD.md`.
 
 ## What it does
 
@@ -34,13 +34,13 @@ core from its UI — here it's a spawned Swift "sidecar" talking over a
 length-prefixed stdio protocol (no XPC service / Xcode entitlements needed).
 
 ```
-┌────────────────────────┐   stdio frames    ┌──────────────────────────┐
-│ PrivoVoice (UI)  │  begin / audio →  │ PrivoVoiceHelper      │
-│  menu bar · hotkey ·   │  ← partial/final  │  loads the .aimodel and  │
-│  mic · HUD · paste     │                   │  drives VoixfulAnalyzer  │
-└────────────────────────┘                   └──────────────────────────┘
-        holds mic + Accessibility                 no TCC permissions —
-                                                   just audio in, text out
+┌─────────────────────────┐  stdio frames   ┌──────────────────────────┐
+│ PrivoVoice (UI process) │  begin/audio →  │ PrivoVoiceHelper (engine)│
+│  menu bar · hotkey ·    │  ← partial/final│  loads the .aimodel and  │
+│  mic · HUD · paste      │                 │  drives VoixfulAnalyzer  │
+└─────────────────────────┘                 └──────────────────────────┘
+     holds mic + Accessibility                  no TCC permissions —
+                                                just audio in, text out
 ```
 
 The mic and Accessibility permissions stay in the UI process; the sidecar only
@@ -59,7 +59,7 @@ sidecar-backed engine; a future **iOS** app (which can't spawn processes) reuses
 `PrivoVoiceKit` with the `InProcessDictationEngine` instead — no other change.
 
 ```
-app/
+PrivoVoice/
 ├── Package.swift
 ├── Sources/
 │   ├── PrivoVoiceIPC/                # Protocol.swift, Frame.swift  (shared)
@@ -77,11 +77,21 @@ app/
 
 ## Build & run
 
+**Prerequisite:** PrivoVoice depends on the [Voixful](https://github.com/AustinJiangH/voixful)
+speech engine via a sibling path (`../voixful`), so clone both next to each other:
+
 ```bash
-cd app
-swift build                 # compiles all four targets against the core
+git clone https://github.com/AustinJiangH/voixful.git
+git clone https://github.com/AustinJiangH/PrivoVoice.git
+cd PrivoVoice
+```
+
+Then:
+
+```bash
+swift build                 # compiles all four targets against the engine
 swift test                  # headless smoke: catalog, settings, IPC, sidecar handshake
-swift run PrivoVoice  # dev run — UI spawns the sidecar from .build/
+swift run PrivoVoice        # dev run — UI spawns the sidecar from .build/
 ```
 
 For a real, double-clickable GUI app (menu-bar item, stable permissions):
@@ -124,7 +134,7 @@ Permissions:
 Selecting a model in the **Models** tab downloads its `.aimodel` into the storage
 location (default `~/Library/PrivoVoice/Models/`, changeable in Settings). Until the
 converted assets are published to Hugging Face, use **Import…** on a card to
-install a locally-converted asset (see [`../convert/`](../convert)); download
+install a locally-converted asset (see the Voixful engine's `convert/`); download
 surfaces a clear "not yet published" message otherwise.
 
 Each card shows what the model is good for: native streaming vs. re-transcribe,
@@ -137,5 +147,14 @@ and the weights license.
   Monitoring). Any key/chord works — `fn`, `fn`+Space, bare keys — and the trigger
   is consumed so it never types.
 - Native streaming (live words) is Nemotron only; every other backend
-  re-transcribes the growing utterance for live partials (see the root README's
+  re-transcribes the growing utterance for live partials (see the Voixful engine README's
   support matrix).
+
+## License
+
+App code © 2026 Austin Jiang, licensed under **Apache-2.0** (see [`LICENSE`](LICENSE)).
+
+PrivoVoice depends on the [Voixful](https://github.com/AustinJiangH/voixful)
+speech engine (also Apache-2.0). Model **weights** are downloaded/imported
+separately and carry their own upstream licenses — see the engine's
+`MODEL_CARD.md`; keep them separate from this Apache-2.0 code when redistributing.
