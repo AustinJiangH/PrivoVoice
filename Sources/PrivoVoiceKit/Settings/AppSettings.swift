@@ -34,6 +34,12 @@ public final class AppSettings {
     public var huggingFaceToken: String? {
         didSet { scheduleSave() }
     }
+    /// Opt-in: share anonymous aggregate usage (counts + device metadata) with
+    /// the collector. OFF by default — the local Dashboard works regardless, and
+    /// nothing is ever sent while this is false. Never includes transcript text.
+    public var telemetryEnabled: Bool {
+        didSet { scheduleSave() }
+    }
 
     private var saveScheduled = false
     private let storeURL: URL
@@ -64,6 +70,7 @@ public final class AppSettings {
             self.hotkey = persisted.hotkey ?? .defaultCombo
             self.localeIdentifier = persisted.localeIdentifier ?? "en-US"
             self.huggingFaceToken = persisted.huggingFaceToken
+            self.telemetryEnabled = persisted.telemetryEnabled ?? false
         } else {
             self.modelsDirectory = Self.defaultModelsDirectory
             self.selectedModelID = nil
@@ -71,6 +78,7 @@ public final class AppSettings {
             self.hotkey = .defaultCombo
             self.localeIdentifier = "en-US"
             self.huggingFaceToken = nil
+            self.telemetryEnabled = false
         }
 
         // Guard against an unsafe shortcut (e.g. a bare key from an older build)
@@ -99,7 +107,8 @@ public final class AppSettings {
             autoCopy: autoCopy,
             hotkey: hotkey,
             localeIdentifier: localeIdentifier,
-            huggingFaceToken: huggingFaceToken
+            huggingFaceToken: huggingFaceToken,
+            telemetryEnabled: telemetryEnabled
         )
         try? snapshot.save(to: storeURL)
     }
@@ -115,6 +124,7 @@ public final class AppSettings {
         var hotkey: KeyCombo?
         var localeIdentifier: String?
         var huggingFaceToken: String?
+        var telemetryEnabled: Bool?
 
         static func load(from url: URL) throws -> Persisted {
             let data = try Data(contentsOf: url)

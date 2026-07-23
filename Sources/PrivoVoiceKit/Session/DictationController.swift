@@ -19,6 +19,11 @@ public final class DictationController {
     private let store: ModelStore
     private let engine: any DictationEngine
     private let makeCapture: @Sendable () -> any AudioCapturing
+    /// Records usage totals (local Dashboard) and, if opted in, opt-in telemetry.
+    /// Optional so tests and the in-process/iOS path can omit it entirely; when
+    /// nil, dictation behaves exactly as before. Recording is best-effort and
+    /// never affects the transcription flow.
+    private let telemetry: Telemetry?
 
     /// Delivered the final transcript when a session completes (non-empty only).
     public var onFinalTranscript: ((String) -> Void)?
@@ -26,12 +31,21 @@ public final class DictationController {
     /// Everything one live session owns.
     private final class Session {
         let capture: any AudioCapturing
+        /// Sample rate of the mono stream we feed the engine — used to convert
+        /// the frames fed into a duration for the usage total.
+        let sampleRate: Double
         var run: Task<Void, Never>?
+        /// Total mono samples forwarded this utterance; frames ÷ sampleRate is
+        /// the transcribed audio length.
+        var framesFed: Int = 0
         /// Set by stop()/cancel() to short-circuit a session whose mic hasn't
         /// opened yet, without cancelling the forwarding task (which would drop
         /// the AsyncStream's buffered tail).
         var stopRequested = false
-        init(capture: any AudioCapturing) { self.capture = capture }
+        init(capture: any AudioCapturing, sampleRate: Double) {
+            self.capture = capture
+            self.sampleRate = sampleRate
+        }
     }
     private var active: Session?
     /// True while a released utterance is still finalizing (blocks a new start).
@@ -40,13 +54,15 @@ public final class DictationController {
     public init(
         appState: AppState, settings: AppSettings, store: ModelStore,
         engine: any DictationEngine,
-        makeCapture: @escaping @Sendable () -> any AudioCapturing = { AudioCapture() }
+        makeCapture: @escaping @Sendable () -> any AudioCapturing = { AudioCapture() },
+        telemetry: Telemetry? = nil
     ) {
         self.appState = appState
         self.settings = settings
         self.store = store
         self.engine = engine
         self.makeCapture = makeCapture
+        self.telemetry = telemetry
     }
 
     public var isRunning: Bool { active != nil }
@@ -78,7 +94,7 @@ public final class DictationController {
         appState.lastError = nil
         appState.setPhase(.listening)
 
-        let session = Session(capture: capture)
+        let session = Session(capture: capture, sampleRate: format.sampleRate)
         active = session
         let engine = self.engine
         let appState = self.appState
@@ -110,6 +126,7 @@ public final class DictationController {
             // buffer before terminating, so the utterance tail is never dropped.
             for await input in stream {
                 let (samples, peak) = Self.monoSamples(input.buffer)
+                session.framesFed += samples.count   // for the transcribed-length total
                 appState.setLevel(peak)
                 await engine.feed(samples)
             }
@@ -138,6 +155,11 @@ public final class DictationController {
             if !final.isEmpty {
                 appState.commitTranscript(final)
                 onFinalTranscript?(final)
+                // Best-effort usage recording — never gates the transcript.
+                let seconds = session.sampleRate > 0
+                    ? Double(session.framesFed) / session.sampleRate : 0
+                telemetry?.record(seconds: seconds, words: Self.wordCount(final),
+                                  modelID: settings.selectedModelID)
             }
         }
     }
@@ -162,6 +184,11 @@ public final class DictationController {
               let spec = ModelCatalog.spec(id: id),
               store.isInstalled(spec) else { return nil }
         return (spec, store.installURL(for: spec))
+    }
+
+    /// Whitespace-delimited word count of a transcript, for the usage total.
+    nonisolated static func wordCount(_ text: String) -> Int {
+        text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
     }
 
     /// Downmix all channels to mono and return the samples plus the peak (0…1).
