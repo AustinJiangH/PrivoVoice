@@ -42,9 +42,9 @@ struct RootView: View {
                     Label(item.title, systemImage: item.systemImage)
                 }
             }
-            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
             .safeAreaInset(edge: .bottom) {
-                StatusFooter(appState: env.appState)
+                StatusFooter()
             }
         } detail: {
             switch route.selection {
@@ -52,29 +52,44 @@ struct RootView: View {
             case .models: ModelsPane()
             }
         }
+        .onAppear { env.store.refresh() }   // rescan the models folder on open
     }
 }
 
-/// A compact live-status footer under the sidebar.
+/// A compact footer under the sidebar: live status + the model currently in use.
 private struct StatusFooter: View {
-    @Bindable var appState: AppState
+    @Environment(AppEnvironment.self) private var env
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
-            Text(appState.phase.label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Circle().fill(statusColor).frame(width: 8, height: 8)
+                Text(env.appState.phase.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            HStack(spacing: 6) {
+                Image(systemName: inUseModel == nil ? "cpu" : "checkmark.seal.fill")
+                    .imageScale(.small)
+                    .foregroundStyle(inUseModel == nil ? .secondary : Color.accentColor)
+                Text(inUseModel?.displayName ?? "No model selected")
+                    .font(.caption.weight(inUseModel == nil ? .regular : .semibold))
+                    .foregroundStyle(inUseModel == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                Spacer()
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
 
-    private var color: Color {
-        switch appState.phase {
+    private var inUseModel: ModelSpec? {
+        env.settings.selectedModelID.flatMap(ModelCatalog.spec(id:))
+    }
+
+    private var statusColor: Color {
+        switch env.appState.phase {
         case .idle: return .secondary
         case .listening: return .green
         case .transcribing: return .orange
