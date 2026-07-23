@@ -87,9 +87,19 @@ swift run VoixfulDictation  # dev run — UI spawns the sidecar from .build/
 For a real, double-clickable GUI app (menu-bar item, stable permissions):
 
 ```bash
-./scripts/make-app.sh       # → build/Voixful.app  (bundles both binaries, ad-hoc signs)
+./scripts/setup-signing.sh  # ONCE: create a stable self-signed identity so TCC
+                            # grants (Input Monitoring/Accessibility) persist
+./scripts/make-app.sh       # → build/Voixful.app  (bundles both binaries, signs)
 open build/Voixful.app
 ```
+
+> **Run `setup-signing.sh` once.** Without it, `make-app.sh` falls back to ad-hoc
+> signing, which changes the app's identity every build — so macOS forgets your
+> Input Monitoring / Accessibility grants and push-to-talk silently stops working
+> after each rebuild. The self-signed "Voixful Dev" identity keeps one stable
+> signature (needs Homebrew `openssl@3`; the first `codesign` shows one keychain
+> prompt — click **Always Allow**). Local dev only; use a Developer ID to
+> distribute.
 
 The first launch prompts for two permissions — grant both, then **relaunch**:
 

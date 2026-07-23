@@ -10,10 +10,10 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			tK1CdAL11FyQ7ag9vjvtl9mjc3Q=
+			ehqA+yjSwwYv8mT0BGjEIm/CWJk=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"b4ad427402f5d45c90eda83dbe3bed97d9a37374"</string>
+			<string>identifier VoixfulEngineHelper and certificate leaf = H"1bf933eea57a47fe7c54cda7d582ea835528ff50"</string>
 		</dict>
 	</dict>
 	<key>rules</key>

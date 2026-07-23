@@ -54,11 +54,21 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc sign the sidecar first, then the app (deep) so the whole bundle is
-# consistently signed and TCC keys on a stable identity.
-echo "[make-app] code-signing (ad-hoc)…"
-codesign --force --sign - "$APP/Contents/MacOS/VoixfulEngineHelper"
-codesign --force --deep --sign - "$APP"
+# Sign with the stable self-signed identity if present (so TCC permissions
+# persist across rebuilds), else fall back to ad-hoc. Sign inside-out: the nested
+# sidecar first, then the app bundle (no --deep — signing the nested binary by
+# hand is the reliable path with a self-signed identity).
+IDENTITY="Voixful Dev"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
+    SIGN_ID="$IDENTITY"
+    echo "[make-app] code-signing with '$IDENTITY' — Input Monitoring / Accessibility grants will persist…"
+else
+    SIGN_ID="-"
+    echo "[make-app] '$IDENTITY' not found — ad-hoc signing (you'll re-grant permissions each build)."
+    echo "[make-app] Run ./scripts/setup-signing.sh once to make grants persist."
+fi
+codesign --force --sign "$SIGN_ID" "$APP/Contents/MacOS/VoixfulEngineHelper"
+codesign --force --sign "$SIGN_ID" "$APP"
 
 echo "[make-app] done: $APP"
 echo "[make-app] launch with:  open \"$APP\""
