@@ -9,6 +9,19 @@ import AVFoundation
 import Foundation
 import VoixfulSpeech
 
+/// The microphone-capture surface `DictationController` depends on — abstracted
+/// so tests can inject a synthetic capture (no real audio hardware).
+public protocol AudioCapturing: Sendable {
+    /// The hardware input format, or `nil` if no mic is configured.
+    func inputFormat() -> AVAudioFormat?
+    /// The audio input stream (call before `start()`).
+    func makeStream() -> AsyncStream<AnalyzerInput>
+    /// Begin capturing. Throws if no mic is configured / the engine won't start.
+    func start() throws
+    /// Stop capturing and finish the stream.
+    func stop()
+}
+
 /// Thread-safe peak accumulator. The audio tap writes it on a real-time thread;
 /// the UI samples-and-resets it on the main actor.
 final class PeakMeter: @unchecked Sendable {
@@ -23,7 +36,7 @@ final class PeakMeter: @unchecked Sendable {
     }
 }
 
-public final class AudioCapture: @unchecked Sendable {
+public final class AudioCapture: AudioCapturing, @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let meter = PeakMeter()
     private var continuation: AsyncStream<AnalyzerInput>.Continuation?

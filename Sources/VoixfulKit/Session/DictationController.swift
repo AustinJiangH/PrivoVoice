@@ -18,15 +18,20 @@ public final class DictationController {
     private let settings: AppSettings
     private let store: ModelStore
     private let engine: any DictationEngine
+    private let makeCapture: @Sendable () -> any AudioCapturing
 
     /// Delivered the final transcript when a session completes (non-empty only).
     public var onFinalTranscript: ((String) -> Void)?
 
     /// Everything one live session owns.
     private final class Session {
-        let capture: AudioCapture
+        let capture: any AudioCapturing
         var run: Task<Void, Never>?
-        init(capture: AudioCapture) { self.capture = capture }
+        /// Set by stop()/cancel() to short-circuit a session whose mic hasn't
+        /// opened yet, without cancelling the forwarding task (which would drop
+        /// the AsyncStream's buffered tail).
+        var stopRequested = false
+        init(capture: any AudioCapturing) { self.capture = capture }
     }
     private var active: Session?
     /// True while a released utterance is still finalizing (blocks a new start).
@@ -34,12 +39,14 @@ public final class DictationController {
 
     public init(
         appState: AppState, settings: AppSettings, store: ModelStore,
-        engine: any DictationEngine
+        engine: any DictationEngine,
+        makeCapture: @escaping @Sendable () -> any AudioCapturing = { AudioCapture() }
     ) {
         self.appState = appState
         self.settings = settings
         self.store = store
         self.engine = engine
+        self.makeCapture = makeCapture
     }
 
     public var isRunning: Bool { active != nil }
@@ -59,7 +66,7 @@ public final class DictationController {
             return
         }
 
-        let capture = AudioCapture()
+        let capture = makeCapture()
         guard let inputFormat = capture.inputFormat() else {
             appState.lastError = "No microphone is configured."
             return
@@ -85,8 +92,10 @@ public final class DictationController {
                 appState.lastError = "Could not start \(spec.displayName): \(error)"
                 return
             }
-            // A very quick tap may have already requested stop.
-            if Task.isCancelled { return }
+            // A very quick tap may have already released before the mic opened —
+            // signalled by `stopRequested` (NOT Task cancellation, which would make
+            // the AsyncStream below drop its buffered tail).
+            if session.stopRequested { return }
 
             let stream = capture.makeStream()
             do {
@@ -96,10 +105,9 @@ public final class DictationController {
                 return
             }
 
-            // Forward mic audio until the stream ends. stop() finishes the
-            // stream (via capture.stop()), which drains any buffered tap buffers
-            // first — so we do NOT break on cancellation here, or the last
-            // fraction of a second of audio would be dropped.
+            // Forward mic audio until the stream ends. stop() finishes the stream
+            // (via capture.stop()); the AsyncStream still delivers every buffered
+            // buffer before terminating, so the utterance tail is never dropped.
             for await input in stream {
                 let (samples, peak) = Self.monoSamples(input.buffer)
                 appState.setLevel(peak)
@@ -114,8 +122,10 @@ public final class DictationController {
         active = nil
         finalizing = true
         appState.setPhase(.transcribing)
-        session.run?.cancel()     // short-circuits a not-yet-capturing session
-        session.capture.stop()    // ends the stream so the forwarder drains
+        session.stopRequested = true   // short-circuits a not-yet-capturing session
+        session.capture.stop()         // ends the stream so the forwarder drains
+        // NB: do NOT cancel `session.run` — that would make the AsyncStream drop
+        // its buffered tail. `capture.stop()` drains it cleanly.
 
         Task { @MainActor in
             _ = await session.run?.value          // let forwarding drain
@@ -137,7 +147,8 @@ public final class DictationController {
         finalizing = false
         guard let session = active else { return }
         active = nil
-        session.run?.cancel()
+        session.stopRequested = true
+        session.run?.cancel()   // hard abort: dropping the tail is fine here
         session.capture.stop()
         Task { await engine.cancel() }
         appState.setPhase(.idle)
@@ -154,7 +165,7 @@ public final class DictationController {
     }
 
     /// Downmix all channels to mono and return the samples plus the peak (0…1).
-    private static func monoSamples(_ buffer: AVAudioPCMBuffer) -> ([Float], Float) {
+    nonisolated static func monoSamples(_ buffer: AVAudioPCMBuffer) -> ([Float], Float) {
         let n = Int(buffer.frameLength)
         guard n > 0, let channels = buffer.floatChannelData else { return ([], 0) }
         let channelCount = Int(buffer.format.channelCount)
