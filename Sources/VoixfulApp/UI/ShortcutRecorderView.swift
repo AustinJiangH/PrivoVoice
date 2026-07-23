@@ -1,0 +1,126 @@
+// A click-to-record control for the push-to-talk chord.
+//
+// While recording it installs a *local* NSEvent monitor (works without any
+// special permission because our window is focused), captures the next key or
+// modifier-only chord, and writes it back through the binding. Press a key with
+// optional modifiers for a key chord; press-and-release modifiers alone (e.g.
+// `fn`) for a modifier-only chord. Esc cancels, Delete clears.
+
+import SwiftUI
+import AppKit
+import VoixfulKit
+
+struct ShortcutRecorderView: View {
+    @Binding var combo: KeyCombo
+
+    @State private var recording = false
+    @State private var monitor: Any?
+    @State private var pendingModifiers: KeyModifiers = []
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack {
+                Image(systemName: recording ? "record.circle" : "keyboard")
+                    .foregroundStyle(recording ? .red : .secondary)
+                Text(recording ? "Press keys…  (Esc to cancel)" : combo.displayString)
+                    .monospaced()
+                Spacer()
+                if !recording && !combo.isEmpty {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .onTapGesture { combo = KeyCombo(keyCode: nil, modifiers: []) }
+                        .help("Clear shortcut")
+                }
+            }
+            .frame(minWidth: 220)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .onDisappear(perform: stop)
+    }
+
+    private func toggle() {
+        recording ? stop() : startRecording()
+    }
+
+    private func startRecording() {
+        recording = true
+        pendingModifiers = []
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+            handle(event)
+            return nil   // swallow while recording
+        }
+    }
+
+    private func stop() {
+        recording = false
+        pendingModifiers = []
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    private func handle(_ event: NSEvent) {
+        let mods = Self.modifiers(from: event.modifierFlags)
+
+        switch event.type {
+        case .keyDown:
+            if event.keyCode == 53 {   // Escape cancels
+                stop()
+                return
+            }
+            if event.keyCode == 51 && mods.isEmpty {   // Delete clears
+                combo = KeyCombo(keyCode: nil, modifiers: [])
+                stop()
+                return
+            }
+            combo = KeyCombo(
+                keyCode: event.keyCode,
+                keyLabel: Self.label(for: event),
+                modifiers: mods)
+            stop()
+
+        case .flagsChanged:
+            if mods.isEmpty {
+                // Modifiers just released with no key pressed → modifier-only chord.
+                if !pendingModifiers.isEmpty {
+                    combo = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: pendingModifiers)
+                    stop()
+                }
+            } else {
+                pendingModifiers = mods
+            }
+
+        default:
+            break
+        }
+    }
+
+    // MARK: Mapping
+
+    static func modifiers(from flags: NSEvent.ModifierFlags) -> KeyModifiers {
+        var m: KeyModifiers = []
+        if flags.contains(.command) { m.insert(.command) }
+        if flags.contains(.option) { m.insert(.option) }
+        if flags.contains(.control) { m.insert(.control) }
+        if flags.contains(.shift) { m.insert(.shift) }
+        if flags.contains(.function) { m.insert(.function) }
+        return m
+    }
+
+    /// Readable label for the pressed key.
+    static func label(for event: NSEvent) -> String {
+        if let named = specialKeys[event.keyCode] { return named }
+        if let chars = event.charactersIgnoringModifiers, !chars.isEmpty,
+           chars.first.map({ $0.isLetter || $0.isNumber || $0.isPunctuation || $0.isSymbol }) == true {
+            return chars.uppercased()
+        }
+        return "Key \(event.keyCode)"
+    }
+
+    private static let specialKeys: [UInt16: String] = [
+        49: "Space", 36: "Return", 48: "Tab", 53: "Esc", 51: "Delete",
+        123: "←", 124: "→", 125: "↓", 126: "↑",
+        122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6",
+        98: "F7", 100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
+    ]
+}

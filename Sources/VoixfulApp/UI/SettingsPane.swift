@@ -1,0 +1,89 @@
+// The Settings pane: push-to-talk shortcut, auto-copy, models location, version.
+
+import SwiftUI
+import AppKit
+import VoixfulKit
+
+struct SettingsPane: View {
+    @Environment(AppEnvironment.self) private var env
+
+    var body: some View {
+        @Bindable var settings = env.settings
+
+        Form {
+            Section("Dictation") {
+                LabeledContent("Push-to-talk") {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        ShortcutRecorderView(combo: $settings.hotkey)
+                        HStack(spacing: 6) {
+                            Text("Presets:").font(.caption2).foregroundStyle(.secondary)
+                            presetButton("fn", KeyCombo(keyCode: nil, modifiers: [.function]))
+                            presetButton("F5", KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: []))
+                            presetButton("⌥Space", KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option]))
+                        }
+                    }
+                }
+                Text("Hold the key to record; release to transcribe and paste at the cursor.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Copy transcript to clipboard automatically", isOn: $settings.autoCopy)
+            }
+
+            Section("Models") {
+                LabeledContent("Storage location") {
+                    HStack {
+                        Text(settings.modelsDirectory.path)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Button("Change…", action: chooseModelsDirectory)
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting([settings.modelsDirectory])
+                        } label: {
+                            Image(systemName: "folder")
+                        }
+                        .help("Reveal in Finder")
+                    }
+                }
+                if settings.modelsDirectory != AppSettings.defaultModelsDirectory {
+                    Button("Reset to default location") {
+                        settings.modelsDirectory = AppSettings.defaultModelsDirectory
+                        env.store.refresh()
+                    }
+                }
+            }
+
+            Section {
+                LabeledContent("Version", value: "\(AppInfo.name) \(AppInfo.version)")
+                if let err = env.appState.lastError {
+                    Label(err, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Settings")
+    }
+
+    private func presetButton(_ title: String, _ combo: KeyCombo) -> some View {
+        Button(title) { env.settings.hotkey = combo }
+            .buttonStyle(.borderless)
+            .font(.caption2)
+    }
+
+    private func chooseModelsDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.directoryURL = env.settings.modelsDirectory
+        if panel.runModal() == .OK, let url = panel.url {
+            env.settings.modelsDirectory = url
+            env.store.refresh()
+        }
+    }
+}
