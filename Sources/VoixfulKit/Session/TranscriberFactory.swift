@@ -21,9 +21,18 @@ public enum TranscriberFactory {
     ///   - backend: the model's backend (from the catalog; the engine still
     ///     validates against the asset on load).
     ///   - locale: BCP-47 locale to request.
+    ///   - declaredBackend: the catalog's backend for this spec, used only as a
+    ///     fallback if the asset can't be inspected.
     public static func makeLive(
-        modelURL: URL, backend: ModelBackend, locale: Locale
+        modelURL: URL, backend declaredBackend: ModelBackend, locale: Locale
     ) throws -> any Transcribing {
+        // Detect the backend from the asset itself — same as the CLI `mic` path
+        // (`ModelBackend.detect`) — so an imported or mislabeled `.aimodel` loads
+        // the runtime it actually needs instead of failing opaquely against the
+        // catalog's declared backend. Fall back to the declared backend only if
+        // the on-disk summary can't be read.
+        let backend = (try? ModelBackend.detect(modelURL: modelURL)) ?? declaredBackend
+
         // Full-context backends read a sibling `pieces.txt` bundled in the asset.
         let pieces = modelURL.appending(path: "pieces.txt")
         switch backend {

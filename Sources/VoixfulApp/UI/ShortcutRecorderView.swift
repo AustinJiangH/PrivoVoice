@@ -18,24 +18,33 @@ struct ShortcutRecorderView: View {
     @State private var pendingModifiers: KeyModifiers = []
 
     var body: some View {
-        Button(action: toggle) {
-            HStack {
-                Image(systemName: recording ? "record.circle" : "keyboard")
-                    .foregroundStyle(recording ? .red : .secondary)
-                Text(recording ? "Press keys…  (Esc to cancel)" : combo.displayString)
-                    .monospaced()
-                Spacer()
-                if !recording && !combo.isEmpty {
+        HStack(spacing: 6) {
+            Button(action: toggle) {
+                HStack {
+                    Image(systemName: recording ? "record.circle" : "keyboard")
+                        .foregroundStyle(recording ? .red : .secondary)
+                    Text(recording ? "Press keys…  (Esc to cancel)" : combo.displayString)
+                        .monospaced()
+                    Spacer()
+                }
+                .frame(minWidth: 200)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.bordered)
+
+            // Sibling control, not nested in the recorder button's label, so the
+            // click reliably clears instead of toggling recording.
+            if !recording && !combo.isEmpty {
+                Button {
+                    combo = KeyCombo(keyCode: nil, modifiers: [])
+                } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
-                        .onTapGesture { combo = KeyCombo(keyCode: nil, modifiers: []) }
-                        .help("Clear shortcut")
                 }
+                .buttonStyle(.borderless)
+                .help("Clear shortcut")
             }
-            .frame(minWidth: 220)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.bordered)
         .onDisappear(perform: stop)
     }
 
@@ -82,12 +91,15 @@ struct ShortcutRecorderView: View {
         case .flagsChanged:
             if mods.isEmpty {
                 // Modifiers just released with no key pressed → modifier-only chord.
+                // Commit the union of everything held during the gesture, so a
+                // multi-modifier chord (⌘⌥) isn't reduced to whatever was released
+                // last.
                 if !pendingModifiers.isEmpty {
                     combo = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: pendingModifiers)
                     stop()
                 }
             } else {
-                pendingModifiers = mods
+                pendingModifiers.formUnion(mods)
             }
 
         default:

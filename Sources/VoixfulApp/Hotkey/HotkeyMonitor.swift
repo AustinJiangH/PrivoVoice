@@ -82,15 +82,20 @@ final class HotkeyMonitor {
     // MARK: Matching
 
     private func handle(type: CGEventType, event: CGEvent) {
+        // The system disables a tap if a callback runs too long or during an
+        // input storm, delivering one of these event types. Re-enable it —
+        // otherwise push-to-talk silently dies for the rest of the session.
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return
+        }
+
         let combo = settings.hotkey
         guard !combo.isEmpty else { return }
         let flags = event.flags
 
-        let required = requiredFlags(combo.modifiers)
-
         if combo.isModifierOnly {
-            // Engaged when every required modifier is held.
-            transition(to: flags.contains(required))
+            transition(to: satisfies(flags, combo.modifiers))
             return
         }
 
@@ -99,12 +104,23 @@ final class HotkeyMonitor {
         let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         switch type {
         case .keyDown where code == keyCode:
-            if flags.contains(required) { transition(to: true) }
+            if satisfies(flags, combo.modifiers) { transition(to: true) }
         case .keyUp where code == keyCode:
             transition(to: false)
         default:
             break
         }
+    }
+
+    /// Exact-match the four chord modifiers (⌘⌥⌃⇧) so extra held modifiers don't
+    /// over-trigger the chord, while still requiring any `fn` in the chord to be
+    /// present. `fn` is left out of the strict comparison because macOS also sets
+    /// it for the arrow/F-key group, which would otherwise break key-code chords.
+    private func satisfies(_ flags: CGEventFlags, _ mods: KeyModifiers) -> Bool {
+        let required = requiredFlags(mods)
+        guard flags.contains(required) else { return false }
+        let chord: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
+        return flags.intersection(chord) == required.intersection(chord)
     }
 
     /// Fire the press/release edge exactly once.

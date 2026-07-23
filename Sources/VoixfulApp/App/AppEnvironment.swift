@@ -28,5 +28,9 @@ final class AppEnvironment {
         let appState = AppState()
         self.appState = appState
         self.dictation = DictationController(appState: appState, settings: settings, store: store)
+
+        // First-run landing: Models when nothing is installed yet, else Settings.
+        // Set once here so an explicit menu-bar jump isn't clobbered on window open.
+        route.selection = store.installedIDs.isEmpty ? .models : .settings
     }
 }

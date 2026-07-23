@@ -124,14 +124,22 @@ public final class DictationController {
                 try await s.startTask.value   // ensure cold-start finished
                 try await s.analyzer.finalizeAndFinishThroughEndOfInput()
             } catch {
-                appState.lastError = "Finalize failed: \(error)"
+                // Cold-start (model load) or finalize failed. `prepare()` throwing
+                // never closes the transcriber's result stream, so cancel the
+                // analyzer to finish it — otherwise the reader below awaits a
+                // stream that never ends and this task (and the UI) wedges.
+                appState.lastError = "Dictation failed: \(error)"
+                await s.analyzer.cancelAndFinishNow()
             }
             let final = (await s.reader.value ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            appState.commitTranscript(final)
             appState.setPhase(.idle)
             appState.reset()
-            if !final.isEmpty { onFinalTranscript?(final) }
+            // Preserve the previous transcript on a no-speech / failed tap.
+            if !final.isEmpty {
+                appState.commitTranscript(final)
+                onFinalTranscript?(final)
+            }
         }
     }
 

@@ -52,10 +52,6 @@ struct RootView: View {
             case .models: ModelsPane()
             }
         }
-        .onAppear {
-            // Land on Models when nothing is installed yet, else Settings.
-            env.route.selection = env.store.installedIDs.isEmpty ? .models : .settings
-        }
     }
 }
 

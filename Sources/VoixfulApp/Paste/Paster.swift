@@ -7,6 +7,10 @@
 import AppKit
 import CoreGraphics
 
+/// Main-actor isolated: all pasteboard + synthetic-event work happens on the
+/// main thread, which also keeps the non-Sendable `NSPasteboardItem` snapshot
+/// from crossing an isolation boundary.
+@MainActor
 enum Paster {
     /// Virtual key code for the `v` key on a US layout.
     private static let vKeyCode: CGKeyCode = 0x09
@@ -19,21 +23,36 @@ enum Paster {
     static func deliver(_ text: String, keepInClipboard: Bool) {
         guard !text.isEmpty else { return }
         let pb = NSPasteboard.general
-        let previous = keepInClipboard ? nil : pb.string(forType: .string)
+        // Snapshot ALL types (not just string) so a non-text clipboard — image,
+        // files, RTF — is restored intact when auto-copy is off.
+        let restore = keepInClipboard ? nil : snapshot(pb)
 
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        // Let the pasteboard settle, then paste.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        // Let the pasteboard settle, then paste. Restore the prior clipboard once
+        // the paste has been consumed (best-effort: a very slow target app could
+        // still read late).
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 50_000_000)
             postPaste()
-            if let previous {
-                // Restore the user's clipboard once the paste has been consumed.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    pb.clearContents()
-                    pb.setString(previous, forType: .string)
-                }
+            if let restore {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                pb.clearContents()
+                if !restore.isEmpty { pb.writeObjects(restore) }
             }
+        }
+    }
+
+    /// Deep-copy the current pasteboard's items across every type so they can be
+    /// re-written after the paste.
+    private static func snapshot(_ pb: NSPasteboard) -> [NSPasteboardItem] {
+        (pb.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) { copy.setData(data, forType: type) }
+            }
+            return copy
         }
     }
 

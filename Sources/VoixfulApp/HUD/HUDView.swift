@@ -17,7 +17,7 @@ struct HUDView: View {
 
                 HStack(spacing: 10) {
                     Image(systemName: appState.phase == .transcribing
-                          ? "waveform.badge.magnifyingglass" : "mic.fill")
+                          ? "ellipsis" : "mic.fill")
                         .foregroundStyle(tint)
                         .font(.system(size: 14, weight: .semibold))
                         .symbolEffect(.pulse, isActive: appState.phase == .transcribing)

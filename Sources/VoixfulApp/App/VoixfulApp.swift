@@ -38,8 +38,8 @@ extension DictationPhase {
     var menuBarSymbol: String {
         switch self {
         case .idle: return "waveform"
-        case .listening: return "waveform.badge.mic"
-        case .transcribing: return "waveform.badge.magnifyingglass"
+        case .listening: return "mic.fill"
+        case .transcribing: return "ellipsis"
         }
     }
 }

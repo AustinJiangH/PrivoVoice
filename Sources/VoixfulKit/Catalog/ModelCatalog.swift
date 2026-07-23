@@ -124,7 +124,7 @@ public enum ModelCatalog {
             languages: [LanguageTag("en")],
             streaming: false,
             speed: .excellent,
-            accuracy: .excellent,
+            accuracy: .good,
             weightsLicense: "CC-BY-4.0",
             werLeaderboard: 5.39,
             summary: "Smallest footprint, fastest passes, best English accuracy of the small tier.",

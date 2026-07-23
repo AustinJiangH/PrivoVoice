@@ -11,7 +11,6 @@ struct ModelCard: View {
 
     @State private var confirmingDelete = false
 
-    private var isInstalled: Bool { env.store.isInstalled(spec) }
     private var isSelected: Bool { env.settings.selectedModelID == spec.id }
     private var installState: InstallState { env.downloader.state(for: spec) }
 

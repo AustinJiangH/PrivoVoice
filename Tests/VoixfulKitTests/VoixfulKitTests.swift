@@ -4,6 +4,7 @@
 
 import XCTest
 import Foundation
+import VoixfulEngine
 @testable import VoixfulKit
 
 final class CatalogTests: XCTestCase {
@@ -31,6 +32,28 @@ final class CatalogTests: XCTestCase {
         let first = ModelCatalog.all[0]
         XCTAssertEqual(ModelCatalog.spec(id: first.id)?.id, first.id)
         XCTAssertNil(ModelCatalog.spec(id: "does-not-exist"))
+    }
+
+    func testAccuracyRatingIsMonotonicWithWER() {
+        // A model with a better (lower) leaderboard WER must not carry a lower
+        // accuracy pip than a worse one — the pips are defined as bucketed WER.
+        let rated = ModelCatalog.all.compactMap { spec -> (wer: Double, rating: Rating)? in
+            spec.werLeaderboard.map { (wer: $0, rating: spec.accuracy) }
+        }
+        for a in rated {
+            for b in rated where b.wer < a.wer {
+                XCTAssertGreaterThanOrEqual(
+                    b.rating, a.rating,
+                    "model with WER \(b.wer) should rate ≥ one with WER \(a.wer)")
+            }
+        }
+    }
+
+    func testOnlyNemotronStreams() {
+        for spec in ModelCatalog.all {
+            XCTAssertEqual(spec.streaming, spec.backend == .nemotron,
+                           "\(spec.id): only the Nemotron backend streams natively")
+        }
     }
 
     func testAllLanguagesAreSortedAndDeduped() {
