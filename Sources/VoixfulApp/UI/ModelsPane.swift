@@ -27,9 +27,18 @@ struct ModelsPane: View {
         }
         .navigationTitle("Models")
         .searchable(text: $searchText, placement: .toolbar, prompt: "Search models")
+        .onAppear { env.store.refresh() }   // pick up assets added since launch
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 languageMenu
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    env.store.refresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .help("Rescan the models folder")
             }
         }
     }

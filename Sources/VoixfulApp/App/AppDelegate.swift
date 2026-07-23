@@ -39,6 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Re-scan so a model copied into the folder while we were in the
+        // background shows up without a relaunch.
+        AppEnvironment.shared.store.refresh()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         AppEnvironment.shared.dictation.cancel()
         hotkey?.stop()
