@@ -1,84 +1,69 @@
-# PrivoVoice for macOS
+<div align="center">
 
-A push-to-talk dictation app for Apple Silicon, built on the [Voixful](https://github.com/AustinJiangH/voixful)
-speech engine (a sibling package). Hold a key, speak, release — the transcript
-is pasted wherever your cursor is. Everything runs on-device via Apple Core AI;
-no audio leaves your Mac.
+# 🎙️ PrivoVoice
 
-> App code here is Apache-2.0 (see [`LICENSE`](LICENSE)). Model **weights** carry
-> their upstream licenses — see the Voixful engine's `MODEL_CARD.md`.
+### Private, on-device dictation for macOS
 
-## What it does
+**Hold a key. Speak. It's typed — wherever your cursor is.**
+Your voice never leaves your Mac. No cloud. No account. No subscription.
 
-- **Push-to-talk dictation.** Hold the configured shortcut (default: `fn`), speak,
-  release. The finished transcript is pasted at the cursor, optionally copied to
-  the clipboard.
-- **Floating HUD.** A small top-center overlay shows an amplitude meter while
-  listening and a shimmer while transcribing — animation only, no window focus.
-- **Menu-bar app.** A status item reflects the global state (idle / listening /
-  transcribing) and opens Settings or quits.
-- **Model management.** Browse every model checkpoint, filter by language,
-  download (or import a local `.aimodel`), select one, and delete the rest.
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Platform: macOS](https://img.shields.io/badge/Platform-macOS-black?logo=apple&logoColor=white)](#-quick-start)
+[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](#)
+[![Engine: Voixful](https://img.shields.io/badge/engine-Voixful-4c9a6b)](https://github.com/AustinJiangH/voixful)
+[![On-device](https://img.shields.io/badge/100%25-on--device-4c9a6b)](#-why-privovoice)
 
-## Architecture — a reusable core
+</div>
 
-The package splits into two products so the non-UI logic can be reused (e.g. by
-a future iOS app):
+---
 
-### Two processes (Handy-style, native)
-
-Transcription runs in a **separate process** from the UI, so a crash or hang in
-the (beta) Core AI model runtime can't take the app down. This is the native
-equivalent of how [Handy](https://github.com/cjpais/Handy) isolates its Rust
-core from its UI — here it's a spawned Swift "sidecar" talking over a
-length-prefixed stdio protocol (no XPC service / Xcode entitlements needed).
+PrivoVoice turns **any** text field into a microphone. Press and hold your
+shortcut, talk, release — the transcript lands at your cursor, in whatever app
+you're using. Everything runs **100% on-device** on Apple Silicon through Apple's
+Core AI runtime, powered by the [**Voixful**](https://github.com/AustinJiangH/voixful)
+speech engine.
 
 ```
-┌─────────────────────────┐  stdio frames   ┌──────────────────────────┐
-│ PrivoVoice (UI process) │  begin/audio →  │ PrivoVoiceHelper (engine)│
-│  menu bar · hotkey ·    │  ← partial/final│  loads the .aimodel and  │
-│  mic · HUD · paste      │                 │  drives VoixfulAnalyzer  │
-└─────────────────────────┘                 └──────────────────────────┘
-     holds mic + Accessibility                  no TCC permissions —
-                                                just audio in, text out
+       ⌥ hold             🎤 speak            ⌥ release          ⌨️ pasted
+   ┌───────────┐     ┌───────────┐      ┌───────────┐     ┌──────────────┐
+   │  fn / ⌥…  │ ──▶ │ "send the │  ──▶ │  finalize │ ──▶ │ Send the doc │
+   │           │     │  doc now" │      │           │     │ now▮         │
+   └───────────┘     └───────────┘      └───────────┘     └──────────────┘
+    nothing leaves      live amplitude      on-device          right where
+    your Mac            HUD                 transcription       your cursor is
 ```
 
-The mic and Accessibility permissions stay in the UI process; the sidecar only
-receives audio frames and returns text, so it needs no TCC grants. If it dies,
-the UI respawns it on the next dictation.
+## ✨ Why PrivoVoice
 
-| Target | Platform | Contents |
-|---|---|---|
-| **`PrivoVoiceKit`** | portable (macOS / iOS) | Catalog, download/store, settings, `AppState`, `AudioCapture`, `DictationController`, and the `DictationEngine` protocol + `InProcessDictationEngine`. No AppKit/SwiftUI. |
-| **`PrivoVoiceIPC`** | portable | The tiny wire protocol (message enums + framing) shared by both processes. |
-| **`PrivoVoiceApp`** | macOS | SwiftUI sidebar (Settings + Models), HUD, menu-bar item, hotkey, paste, and `HelperProcessDictationEngine` (spawns the sidecar). |
-| **`PrivoVoiceHelper`** | macOS | The resident engine process. Runs an `InProcessDictationEngine` behind the IPC protocol. |
+- 🔒 **Truly private** — audio is transcribed locally and never leaves the device. No network, no telemetry.
+- ⌨️ **Works everywhere** — pastes into any app at the cursor; no per-app integration.
+- ⚡ **Push-to-talk** — hold to talk, release to type. Your trigger key is *consumed*, so it never types while you dictate.
+- 🧠 **Your choice of model** — from a 0.6 B streaming model for lowest latency to a 2.5 B model for the best punctuation. Download in-app.
+- 🛡️ **Minimal permissions** — Microphone + Accessibility only. **No Input Monitoring, ever.**
+- 🧩 **Crash-isolated** — the model runs in a separate process, so an engine hiccup can't take the app down.
+- 🆓 **Free & open source** — Apache-2.0, no account, no paywall.
 
-The split hides behind the `DictationEngine` protocol: macOS injects the
-sidecar-backed engine; a future **iOS** app (which can't spawn processes) reuses
-`PrivoVoiceKit` with the `InProcessDictationEngine` instead — no other change.
+## 🧠 Models
 
-```
-PrivoVoice/
-├── Package.swift
-├── Sources/
-│   ├── PrivoVoiceIPC/                # Protocol.swift, Frame.swift  (shared)
-│   ├── PrivoVoiceKit/               # reusable core
-│   │   ├── Catalog/ Settings/ Store/ Support/
-│   │   └── Session/{AppState,AudioCapture,TranscriberFactory,
-│   │               DictationEngine,InProcessDictationEngine,DictationController}.swift
-│   ├── PrivoVoiceHelper/      # main.swift  (the sidecar)
-│   └── PrivoVoiceApp/               # macOS SwiftUI UI process
-│       ├── App/ Engine/ Hotkey/ Paste/ HUD/ MenuBar/ UI/
-│       └── Info.plist
-├── scripts/make-app.sh           # bundle both binaries into PrivoVoice.app
-└── Tests/PrivoVoiceKitTests/        # catalog/settings + IPC framing + real sidecar handshake
-```
+Pick a model in the **Models** tab and it downloads on-device. All are Apple
+Core AI (Palette4) conversions, published on Hugging Face:
 
-## Build & run
+| Model | Best for | Languages | Streaming | Weights |
+|---|---|---|---|---|
+| [**Nemotron Streaming**](https://huggingface.co/AustinJiangH/voixful-nemotron-speech-streaming-en-0.6b) | Lowest-latency dictation (words appear as you speak) | English | ✅ live | NVIDIA Open Model |
+| [**Parakeet TDT v2**](https://huggingface.co/AustinJiangH/voixful-parakeet-tdt-0.6b-v2) | Smallest, fastest, best English accuracy | English | — | CC-BY-4.0 |
+| [**Parakeet TDT v3**](https://huggingface.co/AustinJiangH/voixful-parakeet-tdt-0.6b-v3) | Multilingual | 25 European | — | CC-BY-4.0 |
+| [**Granite Speech NAR**](https://huggingface.co/AustinJiangH/voixful-granite-speech-4.1-2b-nar) | Most accurate overall | en · fr · de · es · pt | — | Apache-2.0 |
+| [**Canary-Qwen**](https://huggingface.co/AustinJiangH/voixful-canary-qwen-2.5b) | Best punctuation & casing | English | — | CC-BY-4.0 |
 
-**Prerequisite:** PrivoVoice depends on the [Voixful](https://github.com/AustinJiangH/voixful)
-speech engine via a sibling path (`../voixful`), so clone both next to each other:
+> Only Nemotron streams natively (words appear *while* you speak); the others
+> re-transcribe the growing utterance for live partials. Each card in the app
+> shows speed, accuracy, size, and language support at a glance.
+
+## 🚀 Quick start
+
+> **Prerequisite:** PrivoVoice is built on the [Voixful](https://github.com/AustinJiangH/voixful)
+> speech engine, referenced as a sibling package (`../voixful`). Clone both next to each other:
 
 ```bash
 git clone https://github.com/AustinJiangH/voixful.git
@@ -86,75 +71,100 @@ git clone https://github.com/AustinJiangH/PrivoVoice.git
 cd PrivoVoice
 ```
 
-Then:
+Run it:
 
 ```bash
-swift build                 # compiles all four targets against the engine
-swift test                  # headless smoke: catalog, settings, IPC, sidecar handshake
-swift run PrivoVoice        # dev run — UI spawns the sidecar from .build/
+swift run PrivoVoice          # dev run (menu-bar app)
 ```
 
-For a real, double-clickable GUI app (menu-bar item, stable permissions):
+Or build a real, double-clickable `.app`:
 
 ```bash
-./scripts/setup-signing.sh  # ONCE: create a stable self-signed identity so TCC
-                            # grants (Microphone/Accessibility) persist
-./scripts/make-app.sh       # → build/PrivoVoice.app  (bundles both binaries, signs)
+./scripts/setup-signing.sh    # once — stable signing so permissions persist
+./scripts/make-app.sh         # → build/PrivoVoice.app
 open build/PrivoVoice.app
 ```
 
-> **Run `setup-signing.sh` once.** Without it, `make-app.sh` falls back to ad-hoc
-> signing, which changes the app's identity every build — so macOS forgets your
-> Microphone / Accessibility grants and dictation silently stops working
-> after each rebuild. The self-signed "PrivoVoice Dev" identity keeps one stable
-> signature (needs Homebrew `openssl@3`; the first `codesign` shows one keychain
-> prompt — click **Always Allow**). Local dev only; use a Developer ID to
-> distribute.
+Then: open **Models**, download one, hit **Use this model**, grant the two
+permissions below, and **hold `fn`** to dictate.
 
-Permissions:
+## 🔒 Permissions
 
-1. **Microphone** — to capture your speech.
+1. **Microphone** — to hear you.
 2. **Accessibility** — for the push-to-talk hotkey and to paste the transcript.
 
-> **No Input Monitoring, ever.** The hotkey is a **consuming `CGEventTap`**
-> (`kCGEventTapOptionDefault`) — the same approach Handy and OpenSuperWhisper use.
-> A *consuming* tap requires **Accessibility**, not Input Monitoring (only the
-> passive `.listenOnly` tap needs Input Monitoring). Since Accessibility is
-> already needed to paste, the hotkey costs no extra permission. It works with
-> **any** key or chord — including `fn`+Space and bare keys — and **consumes** the
-> trigger, so it never types while you dictate. Default is **hold `fn`**.
+<details>
+<summary><b>Why no Input Monitoring?</b></summary>
 
-> `swift run` works for development (the UI finds the sidecar next to itself in
-> `.build/`). `make-app.sh` signs with the stable self-signed identity from
-> `setup-signing.sh` (see above) so grants persist; for distribution, swap in a
-> Developer ID identity and notarize the bundle.
+The hotkey is a **consuming `CGEventTap`** (`kCGEventTapOptionDefault`) — the same
+approach [Handy](https://github.com/cjpais/Handy) and OpenSuperWhisper use. A
+*consuming* tap requires **Accessibility**, not Input Monitoring (only a passive
+`.listenOnly` tap needs Input Monitoring). Since Accessibility is already needed
+to paste, the hotkey costs no extra permission — and because the tap *consumes*
+the trigger, any key/chord works (including `fn`, `fn`+Space, bare keys) without
+typing while you dictate. Default is **hold `fn`**.
+</details>
 
-## Models
+<details>
+<summary><b>Stable signing (so grants persist across rebuilds)</b></summary>
 
-Selecting a model in the **Models** tab downloads its `.aimodel` into the storage
-location (default `~/Library/PrivoVoice/Models/`, changeable in Settings). Until the
-converted assets are published to Hugging Face, use **Import…** on a card to
-install a locally-converted asset (see the Voixful engine's `convert/`); download
-surfaces a clear "not yet published" message otherwise.
+`make-app.sh` signs with the self-signed **PrivoVoice Dev** identity created by
+`setup-signing.sh` (needs Homebrew `openssl@3`; the first `codesign` shows one
+keychain prompt — click **Always Allow**). Ad-hoc signing changes identity every
+build, so macOS would forget your grants — that's what the stable identity fixes.
+Local dev only; use a Developer ID + notarization to distribute.
+</details>
 
-Each card shows what the model is good for: native streaming vs. re-transcribe,
-speed and accuracy ratings, supported languages, on-disk size, leaderboard WER,
-and the weights license.
+## 🏗️ Architecture
 
-## Notes & limitations
+Two processes, so a crash or hang in the (beta) Core AI runtime can't take the UI
+down — the native equivalent of how Handy isolates its Rust core:
 
-- The push-to-talk hotkey is a **consuming `CGEventTap`** (Accessibility, no Input
-  Monitoring). Any key/chord works — `fn`, `fn`+Space, bare keys — and the trigger
-  is consumed so it never types.
-- Native streaming (live words) is Nemotron only; every other backend
-  re-transcribes the growing utterance for live partials (see the Voixful engine README's
-  support matrix).
+```
+┌─────────────────────────┐  stdio frames   ┌──────────────────────────┐
+│ PrivoVoice (UI process) │  begin/audio →  │ PrivoVoiceHelper (engine)│
+│  menu bar · hotkey ·    │  ← partial/final│  loads the .aimodel and  │
+│  mic · HUD · paste      │                 │  drives Voixful          │
+└─────────────────────────┘                 └──────────────────────────┘
+     holds mic + Accessibility                  no TCC permissions —
+                                                just audio in, text out
+```
 
-## License
+<details>
+<summary><b>Targets & the reusable core</b></summary>
 
-App code © 2026 Austin Jiang, licensed under **Apache-2.0** (see [`LICENSE`](LICENSE)).
+The app splits into portable and macOS-only pieces so the non-UI logic could power a future iOS app too:
 
-PrivoVoice depends on the [Voixful](https://github.com/AustinJiangH/voixful)
-speech engine (also Apache-2.0). Model **weights** are downloaded/imported
-separately and carry their own upstream licenses — see the engine's
-`MODEL_CARD.md`; keep them separate from this Apache-2.0 code when redistributing.
+| Target | Platform | Contents |
+|---|---|---|
+| `PrivoVoiceKit` | portable | Model catalog, download/store, settings, `AudioCapture`, `DictationController`, the `DictationEngine` protocol + in-process engine. No AppKit/SwiftUI. |
+| `PrivoVoiceIPC` | portable | The tiny stdio wire protocol shared by both processes. |
+| `PrivoVoiceApp` | macOS | SwiftUI UI (Settings + Models), HUD, menu bar, hotkey, paste, and the sidecar-spawning engine. |
+| `PrivoVoiceHelper` | macOS | The resident engine process (the sidecar). |
+
+The split hides behind the `DictationEngine` protocol: macOS injects the sidecar;
+a future iOS app reuses `PrivoVoiceKit` with the in-process engine instead — no
+other change.
+</details>
+
+## 🌱 Built on Voixful
+
+PrivoVoice is the app; **[Voixful](https://github.com/AustinJiangH/voixful) is the
+engine.** Voixful is an open-source, `SpeechAnalyzer`-shaped API over local speech
+models on Apple Silicon (Core AI) — it handles mel extraction, model loading, and
+transcription across every backend (Nemotron, Parakeet, Granite, Canary, …).
+PrivoVoice adds the product on top: the push-to-talk UX, model management, the
+floating HUD, and the two-process sandboxing.
+
+> Want to build your own on-device speech app? Start with **[Voixful](https://github.com/AustinJiangH/voixful)**.
+> Just want to dictate? That's **PrivoVoice**. 💚
+
+## 📄 License
+
+PrivoVoice — app code © 2026 Austin Jiang, **Apache-2.0** (see [`LICENSE`](LICENSE)).
+Built on [Voixful](https://github.com/AustinJiangH/voixful) (also Apache-2.0).
+
+Model **weights** are downloaded separately and carry their own upstream licenses
+(CC-BY-4.0 · Apache-2.0 · NVIDIA Open Model License) — see each model card on
+Hugging Face. Keep the weights' licenses separate from this Apache-2.0 code when
+you redistribute.
