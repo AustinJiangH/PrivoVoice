@@ -53,6 +53,18 @@ struct SettingsPane: View {
                         env.store.refresh()
                     }
                 }
+
+                LabeledContent("Hugging Face token") {
+                    SecureField("hf_… (optional)", text: Binding(
+                        get: { settings.huggingFaceToken ?? "" },
+                        set: { settings.huggingFaceToken = $0.isEmpty ? nil : $0 }))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 220)
+                }
+                Text("Only needed to download gated or private model repos. "
+                     + "Overridden by the HF_TOKEN environment variable if set.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {

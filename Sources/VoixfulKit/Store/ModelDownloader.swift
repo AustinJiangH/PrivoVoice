@@ -110,18 +110,46 @@ public final class ModelDownloader {
         let size: Int64?
     }
 
+    /// A Hugging Face access token for gated/private repos: the Settings field,
+    /// else the standard env vars (so `HF_TOKEN=… swift run` works too).
+    private var hfToken: String? {
+        if let t = settings.huggingFaceToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !t.isEmpty { return t }
+        let env = ProcessInfo.processInfo.environment
+        return env["HF_TOKEN"] ?? env["HUGGING_FACE_HUB_TOKEN"]
+    }
+
+    /// A request carrying the bearer token when we have one.
+    private func authorized(_ url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        if let token = hfToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
     private func downloadHuggingFace(spec: ModelSpec, repo: String, revision: String) async throws {
         let fm = FileManager.default
         // 1. List the repo tree.
         let treeURL = URL(string:
             "https://huggingface.co/api/models/\(repo)/tree/\(revision)?recursive=true")!
-        let (treeData, treeResp) = try await URLSession.shared.data(from: treeURL)
+        let (treeData, treeResp) = try await URLSession.shared.data(for: authorized(treeURL))
         guard let http = treeResp as? HTTPURLResponse else {
             throw DownloadError.message("No response from Hugging Face.")
         }
         if http.statusCode == 404 {
             throw DownloadError.message(
                 "Not yet published on Hugging Face (\(repo)). Import a converted .aimodel instead.")
+        }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            // HF returns 401 for gated/private repos AND for repos that don't
+            // exist (it masks not-found to avoid leaking existence), so cover both.
+            throw DownloadError.message(hfToken == nil
+                ? "\(repo) isn't accessible — it may be gated/private (add a Hugging Face "
+                    + "token in Settings → Models, or set HF_TOKEN) or not yet published. "
+                    + "You can Import a local .aimodel instead."
+                : "Hugging Face rejected the request for \(repo) (HTTP \(http.statusCode)). "
+                    + "Check the token is valid and has access, or that the repo exists.")
         }
         guard (200..<300).contains(http.statusCode) else {
             throw DownloadError.message("Hugging Face returned HTTP \(http.statusCode).")
@@ -146,9 +174,14 @@ public final class ModelDownloader {
             try Task.checkCancellation()
             let fileURL = URL(string:
                 "https://huggingface.co/\(repo)/resolve/\(revision)/\(file.path)")!
-            let (tmp, resp) = try await URLSession.shared.download(from: fileURL)
+            let (tmp, resp) = try await URLSession.shared.download(for: authorized(fileURL))
             guard let fh = resp as? HTTPURLResponse, (200..<300).contains(fh.statusCode) else {
-                throw DownloadError.message("Failed to download \(file.path).")
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                throw DownloadError.message(
+                    code == 401 || code == 403
+                        ? "Not authorized to download \(file.path) (HTTP \(code)) — the repo is gated; "
+                            + "accept its terms on Hugging Face and use a token with access."
+                        : "Failed to download \(file.path) (HTTP \(code)).")
             }
             let target = staging.appending(path: file.path)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)

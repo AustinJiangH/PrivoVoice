@@ -30,6 +30,10 @@ public final class AppSettings {
     public var localeIdentifier: String {
         didSet { scheduleSave() }
     }
+    /// Optional Hugging Face access token for gated/private model repos.
+    public var huggingFaceToken: String? {
+        didSet { scheduleSave() }
+    }
 
     private var saveScheduled = false
     private let storeURL: URL
@@ -59,12 +63,14 @@ public final class AppSettings {
             self.autoCopy = persisted.autoCopy ?? true
             self.hotkey = persisted.hotkey ?? .defaultCombo
             self.localeIdentifier = persisted.localeIdentifier ?? "en-US"
+            self.huggingFaceToken = persisted.huggingFaceToken
         } else {
             self.modelsDirectory = Self.defaultModelsDirectory
             self.selectedModelID = nil
             self.autoCopy = true
             self.hotkey = .defaultCombo
             self.localeIdentifier = "en-US"
+            self.huggingFaceToken = nil
         }
     }
 
@@ -84,7 +90,8 @@ public final class AppSettings {
             selectedModelID: selectedModelID,
             autoCopy: autoCopy,
             hotkey: hotkey,
-            localeIdentifier: localeIdentifier
+            localeIdentifier: localeIdentifier,
+            huggingFaceToken: huggingFaceToken
         )
         try? snapshot.save(to: storeURL)
     }
@@ -99,6 +106,7 @@ public final class AppSettings {
         var autoCopy: Bool?
         var hotkey: KeyCombo?
         var localeIdentifier: String?
+        var huggingFaceToken: String?
 
         static func load(from url: URL) throws -> Persisted {
             let data = try Data(contentsOf: url)
