@@ -92,8 +92,10 @@ final class HotkeyMonitor {
     private func register() {
         unregister()
         let combo = settings.hotkey
-        // Carbon needs a key code; modifier-only chords can't be registered.
-        guard let keyCode = combo.keyCode else {
+        // Refuse chords Carbon can't register safely: a bare key (would fire on
+        // every press) or an fn-only chord (Carbon has no fn). This is what
+        // prevents a stored "fn+Space" from registering as bare Space.
+        guard combo.isRegisterableHotkey, let keyCode = combo.keyCode else {
             isActive = false
             onPermissionChange?()
             return

@@ -76,6 +76,19 @@ final class KeyComboTests: XCTestCase {
         XCTAssertTrue(KeyCombo(keyCode: nil, modifiers: []).isEmpty)
     }
 
+    func testRegisterableHotkeyRule() {
+        // ⌥Space and a function key are registerable.
+        XCTAssertTrue(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option]).isRegisterableHotkey)
+        XCTAssertTrue(KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: []).isRegisterableHotkey)
+        // fn+Space is NOT (fn has no Carbon modifier → would become bare Space).
+        XCTAssertFalse(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.function]).isRegisterableHotkey)
+        // Bare Space and modifier-only are NOT registerable.
+        XCTAssertFalse(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: []).isRegisterableHotkey)
+        XCTAssertFalse(KeyCombo(keyCode: nil, modifiers: [.option]).isRegisterableHotkey)
+        // The default must be registerable.
+        XCTAssertTrue(KeyCombo.defaultCombo.isRegisterableHotkey)
+    }
+
     func testCodableRoundTrip() throws {
         let combo = KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: [.command, .option])
         let data = try JSONEncoder().encode(combo)

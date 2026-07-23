@@ -72,6 +72,14 @@ public final class AppSettings {
             self.localeIdentifier = "en-US"
             self.huggingFaceToken = nil
         }
+
+        // Migrate shortcuts that can't be a global hotkey (e.g. an fn-only or
+        // bare-key chord saved by an older build) to the default, and persist it.
+        // Property observers don't fire during init, so save explicitly.
+        if !hotkey.isRegisterableHotkey {
+            hotkey = .defaultCombo
+            saveNow()
+        }
     }
 
     /// Coalesce rapid mutations into one write on the next runloop tick.

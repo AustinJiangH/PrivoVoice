@@ -24,7 +24,8 @@ struct SettingsPane: View {
                     }
                 }
                 Text("Hold the shortcut to record; release to transcribe and paste at the cursor. "
-                     + "It must include a key (a bare modifier like fn can't be used).")
+                     + "Use a modifier + key (e.g. ⌥Space) or a function key — a bare key or "
+                     + "fn alone can't be a global hotkey.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

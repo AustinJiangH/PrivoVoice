@@ -56,6 +56,24 @@ public struct KeyCombo: Sendable, Hashable, Codable {
     /// `true` when the chord is triggered purely by modifiers (no key code).
     public var isModifierOnly: Bool { keyCode == nil && !modifiers.isEmpty }
 
+    /// Virtual key codes for F1–F20 — the only keys safe to register as a global
+    /// hotkey with no modifier (they don't collide with normal typing).
+    public static let functionKeyCodes: Set<UInt16> = [
+        122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111,   // F1–F12
+        105, 107, 113, 106, 64, 79, 80, 90,                       // F13–F20
+    ]
+
+    /// Whether this chord can be a global hotkey via Carbon `RegisterEventHotKey`:
+    /// it needs a key code, and either a ⌘⌥⌃⇧ modifier (`fn` does NOT count —
+    /// Carbon has no `fn`) or a function key (safe on its own). This is why a
+    /// bare key like Space, or an `fn`-only chord, is rejected — registering it
+    /// would fire on every press of that key.
+    public var isRegisterableHotkey: Bool {
+        guard let keyCode else { return false }
+        let realModifiers = modifiers.subtracting(.function)
+        return !realModifiers.isEmpty || KeyCombo.functionKeyCodes.contains(keyCode)
+    }
+
     /// Rendered chord, e.g. "⌥⌘Space" or "fn".
     public var displayString: String {
         if isEmpty { return "Not set" }

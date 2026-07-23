@@ -80,10 +80,15 @@ struct ShortcutRecorderView: View {
         }
         // `fn` has no Carbon equivalent and can't be part of a registered hotkey.
         mods.remove(.function)
-        combo = KeyCombo(
+        let candidate = KeyCombo(
             keyCode: event.keyCode,
             keyLabel: Self.label(for: event),
             modifiers: mods)
+        // Only accept a chord that can actually be registered — a modifier + key
+        // (e.g. ⌥Space) or a function key. A bare key like Space is ignored so we
+        // don't bind a hotkey that fires on every keystroke.
+        guard candidate.isRegisterableHotkey else { return }
+        combo = candidate
         stop()
     }
 
