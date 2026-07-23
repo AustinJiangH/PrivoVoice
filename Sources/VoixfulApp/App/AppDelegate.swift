@@ -32,17 +32,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.onRelease = { env.dictation.stop() }
         monitor.start()
         self.hotkey = monitor
-
-        if !monitor.isTrusted {
-            env.appState.lastError = "Grant Accessibility & Input Monitoring permission to Voixful, "
-                + "then relaunch, to enable the push-to-talk hotkey and paste."
-        }
+        updatePermissionStatus()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         // Re-scan so a model copied into the folder while we were in the
         // background shows up without a relaunch.
         AppEnvironment.shared.store.refresh()
+        // Install the hotkey tap if the user just granted permission.
+        hotkey?.retry()
+        updatePermissionStatus()
+    }
+
+    /// Reflect the exact missing permission(s) in the UI, or clear our message.
+    private func updatePermissionStatus() {
+        guard let hotkey else { return }
+        let appState = AppEnvironment.shared.appState
+        if hotkey.isActive && hotkey.canPaste {
+            if appState.lastError?.hasPrefix("Grant ") == true { appState.lastError = nil }
+            return
+        }
+        var missing: [String] = []
+        if !hotkey.isActive { missing.append("Input Monitoring") }
+        if !hotkey.canPaste { missing.append("Accessibility") }
+        appState.lastError = "Grant " + missing.joined(separator: " + ")
+            + " to Voixful in System Settings → Privacy & Security. "
+            + "It activates when you switch back to Voixful (relaunch if it doesn't)."
     }
 
     func applicationWillTerminate(_ notification: Notification) {

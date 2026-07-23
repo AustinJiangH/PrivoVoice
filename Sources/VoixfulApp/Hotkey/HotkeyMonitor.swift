@@ -1,16 +1,20 @@
 // Global push-to-talk via a CGEventTap.
 //
 // Watches key + modifier events session-wide (listen-only, so it never swallows
-// the key — printable trigger keys will still type, which is why the default is
-// the modifier-only `fn` chord). Fires `onPress` when the configured chord
-// engages and `onRelease` when it disengages. Both callbacks run on the main
-// actor (the tap is installed on the main run loop).
+// the key). Fires `onPress` when the configured chord engages and `onRelease`
+// when it disengages, both on the main actor (the tap runs on the main run loop).
 //
-// Requires Accessibility / Input Monitoring permission; without it `tapCreate`
-// returns nil and `isTrusted` is false.
+// Two SEPARATE TCC permissions are involved — this is the usual reason
+// push-to-talk "does nothing":
+//   • Input Monitoring — REQUIRED for a keyboard event tap to receive events.
+//     Without it `CGEvent.tapCreate` returns nil and nothing ever fires.
+//   • Accessibility    — required to synthesize the ⌘V paste (`CGEvent.post`).
+// `start()` requests both (prompting); `retry()` installs the tap once the user
+// grants permission — called on app re-activation, so no relaunch is needed.
 
 import AppKit
 import CoreGraphics
+import IOKit.hid
 import VoixfulKit
 
 @MainActor
@@ -23,19 +27,38 @@ final class HotkeyMonitor {
     private var source: CFRunLoopSource?
     private var isDown = false
 
-    /// Whether the process is allowed to observe global input.
-    private(set) var isTrusted = false
+    /// Tap installed and receiving events (Input Monitoring granted).
+    private(set) var isActive = false
+    /// Accessibility granted — needed to post the paste keystroke.
+    private(set) var canPaste = false
 
     init(settings: AppSettings) {
         self.settings = settings
     }
 
+    /// Request both permissions (prompting) and install the tap if allowed.
     func start() {
-        // Prompt for Accessibility trust if not already granted. The option key
-        // is referenced by its literal value to avoid touching the non-Sendable
-        // global `kAXTrustedCheckOptionPrompt` under Swift 6 concurrency checking.
-        let opts = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        isTrusted = AXIsProcessTrustedWithOptions(opts)
+        // Input Monitoring: prompts to add Voixful to the list.
+        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+        // Accessibility: prompt (needed for paste). Literal key avoids the
+        // non-Sendable global `kAXTrustedCheckOptionPrompt` under Swift 6.
+        canPaste = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+        installTap()
+    }
+
+    /// Re-check permissions (no prompt) and install the tap if it isn't yet.
+    /// Call when the app regains focus after the user visits System Settings.
+    func retry() {
+        if !canPaste { canPaste = AXIsProcessTrusted() }
+        installTap()
+    }
+
+    /// The keyboard tap only succeeds once Input Monitoring is granted.
+    private func installTap() {
+        guard !isActive else { return }
+        guard IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted else {
+            return
+        }
 
         let mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
@@ -60,7 +83,6 @@ final class HotkeyMonitor {
             },
             userInfo: refcon
         ) else {
-            isTrusted = false
             return
         }
 
@@ -69,7 +91,7 @@ final class HotkeyMonitor {
         self.source = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
-        isTrusted = true
+        isActive = true
     }
 
     func stop() {
