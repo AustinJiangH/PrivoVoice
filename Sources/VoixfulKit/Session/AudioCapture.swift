@@ -66,6 +66,10 @@ public final class AudioCapture: @unchecked Sendable {
 
         let meter = self.meter
         let cont = self.continuation
+        // NOTE: macOS 27 deprecated this overload for an error-reporting variant,
+        // but that variant currently imports into Swift only as a broken
+        // `__installTap` (wrong `error:` type) with no proper refinement — so we
+        // keep the working overload. Switch once the SDK ships the Swift wrapper.
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
             meter.record(Self.peakAmplitude(buffer))
             guard let copy = Self.copy(buffer) else { return }
