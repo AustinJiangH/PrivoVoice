@@ -33,6 +33,14 @@ public final class AudioCapture: @unchecked Sendable {
 
     public init() {}
 
+    /// The microphone's hardware input format, or `nil` if none is configured.
+    /// Readable before `start()` so the caller can announce the sample rate to
+    /// the engine.
+    public func inputFormat() -> AVAudioFormat? {
+        let f = engine.inputNode.inputFormat(forBus: 0)
+        return (f.channelCount > 0 && f.sampleRate > 0) ? f : nil
+    }
+
     /// Create the input stream. Call before `start()` so the analyzer can be
     /// wired up first and no audio is dropped during model cold-start.
     public func makeStream() -> AsyncStream<AnalyzerInput> {

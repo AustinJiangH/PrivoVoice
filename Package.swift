@@ -2,12 +2,18 @@
 // Voixful dictation app — a macOS push-to-talk dictation front-end built on the
 // Voixful core API (the root package, referenced by local path).
 //
-// Two products:
-//   • VoixfulKit  — the reusable, UI-agnostic core (model catalog, download/store,
-//                   settings, and the dictation session that drives VoixfulAnalyzer).
-//                   Kept platform-portable so a future iOS app can reuse it.
-//   • VoixfulApp  — the macOS SwiftUI executable: sidebar (Settings + Models),
-//                   floating HUD, menu-bar item, global push-to-talk + paste.
+// Two-process architecture (Handy-style, native): the UI process owns the menu
+// bar, hotkey, mic, HUD, and paste; a separate resident engine process loads the
+// Core AI model and transcribes, so a model-runtime crash can't take the UI down.
+// They talk over a length-prefixed stdio protocol.
+//
+// Targets:
+//   • VoixfulKit           — reusable, UI-agnostic core (catalog, store, settings,
+//                            DictationController + the DictationEngine protocol with
+//                            an in-process impl). Portable to iOS.
+//   • VoixfulIPC           — the tiny wire protocol shared by both processes.
+//   • VoixfulApp           — the macOS SwiftUI UI process (spawns the engine).
+//   • VoixfulEngineHelper  — the resident engine process (the sidecar).
 
 import PackageDescription
 
@@ -19,6 +25,8 @@ let package = Package(
     products: [
         .library(name: "VoixfulKit", targets: ["VoixfulKit"]),
         .executable(name: "VoixfulDictation", targets: ["VoixfulApp"]),
+        // Built as a product so it's always compiled; the UI process spawns it.
+        .executable(name: "VoixfulEngineHelper", targets: ["VoixfulEngineHelper"]),
     ],
     dependencies: [
         // The Voixful core lives one directory up. Local path keeps the app in
@@ -26,6 +34,9 @@ let package = Package(
         .package(path: ".."),
     ],
     targets: [
+        // MARK: Cross-process wire protocol (Foundation-only, both processes share)
+        .target(name: "VoixfulIPC"),
+
         // MARK: Reusable core (portable across macOS / iOS)
         .target(
             name: "VoixfulKit",
@@ -41,10 +52,16 @@ let package = Package(
             ]
         ),
 
-        // MARK: macOS SwiftUI app
+        // MARK: Engine process (the sidecar) — loads the model, transcribes
+        .executableTarget(
+            name: "VoixfulEngineHelper",
+            dependencies: ["VoixfulKit", "VoixfulIPC"]
+        ),
+
+        // MARK: macOS SwiftUI app (UI process)
         .executableTarget(
             name: "VoixfulApp",
-            dependencies: ["VoixfulKit"],
+            dependencies: ["VoixfulKit", "VoixfulIPC"],
             // Embed an Info.plist so macOS TCC grants REAL microphone audio (a
             // bare SwiftPM binary is otherwise fed silence) and the process runs
             // as a menu-bar accessory. Same linker trick the root CLI uses.
@@ -61,7 +78,7 @@ let package = Package(
         // MARK: Kit unit tests (headless smoke coverage)
         .testTarget(
             name: "VoixfulKitTests",
-            dependencies: ["VoixfulKit"]
+            dependencies: ["VoixfulKit", "VoixfulIPC"]
         ),
     ]
 )

@@ -25,51 +25,81 @@ Apple Core AI; no audio leaves your Mac.
 The package splits into two products so the non-UI logic can be reused (e.g. by
 a future iOS app):
 
-| Product | Platform | Contents |
-|---|---|---|
-| **`VoixfulKit`** | portable (macOS / iOS) | Model catalog, download/store, settings, and the `DictationController` that drives `VoixfulAnalyzer`. No AppKit/SwiftUI. |
-| **`VoixfulApp`** | macOS | SwiftUI sidebar (Settings + Models), floating HUD, menu-bar item, global push-to-talk hotkey, paste-at-cursor. |
+### Two processes (Handy-style, native)
 
-`VoixfulKit` depends only on the Voixful core libraries and Foundation/AVFoundation.
-The macOS-only glue (a `CGEventTap` hotkey, `CGEvent` paste, `NSPanel` HUD,
-`MenuBarExtra`) lives entirely in `VoixfulApp`. To build an iOS app, reuse
-`VoixfulKit` and write a new UI + capture trigger.
+Transcription runs in a **separate process** from the UI, so a crash or hang in
+the (beta) Core AI model runtime can't take the app down. This is the native
+equivalent of how [Handy](https://github.com/cjpais/Handy) isolates its Rust
+core from its UI — here it's a spawned Swift "sidecar" talking over a
+length-prefixed stdio protocol (no XPC service / Xcode entitlements needed).
+
+```
+┌────────────────────────┐   stdio frames    ┌──────────────────────────┐
+│ VoixfulDictation (UI)  │  begin / audio →  │ VoixfulEngineHelper      │
+│  menu bar · hotkey ·   │  ← partial/final  │  loads the .aimodel and  │
+│  mic · HUD · paste     │                   │  drives VoixfulAnalyzer  │
+└────────────────────────┘                   └──────────────────────────┘
+        holds mic + Accessibility                 no TCC permissions —
+                                                   just audio in, text out
+```
+
+The mic and Accessibility permissions stay in the UI process; the sidecar only
+receives audio frames and returns text, so it needs no TCC grants. If it dies,
+the UI respawns it on the next dictation.
+
+| Target | Platform | Contents |
+|---|---|---|
+| **`VoixfulKit`** | portable (macOS / iOS) | Catalog, download/store, settings, `AppState`, `AudioCapture`, `DictationController`, and the `DictationEngine` protocol + `InProcessDictationEngine`. No AppKit/SwiftUI. |
+| **`VoixfulIPC`** | portable | The tiny wire protocol (message enums + framing) shared by both processes. |
+| **`VoixfulApp`** | macOS | SwiftUI sidebar (Settings + Models), HUD, menu-bar item, hotkey, paste, and `HelperProcessDictationEngine` (spawns the sidecar). |
+| **`VoixfulEngineHelper`** | macOS | The resident engine process. Runs an `InProcessDictationEngine` behind the IPC protocol. |
+
+The split hides behind the `DictationEngine` protocol: macOS injects the
+sidecar-backed engine; a future **iOS** app (which can't spawn processes) reuses
+`VoixfulKit` with the `InProcessDictationEngine` instead — no other change.
 
 ```
 app/
-├── Package.swift                 # depends on the root package via path: ".."
+├── Package.swift
 ├── Sources/
+│   ├── VoixfulIPC/                # Protocol.swift, Frame.swift  (shared)
 │   ├── VoixfulKit/               # reusable core
-│   │   ├── Catalog/ModelCatalog.swift
-│   │   ├── Settings/{AppSettings,KeyCombo}.swift
-│   │   ├── Store/{ModelStore,ModelDownloader}.swift
-│   │   └── Session/{AppState,AudioCapture,TranscriberFactory,DictationController}.swift
-│   └── VoixfulApp/               # macOS SwiftUI app
-│       ├── App/                  # scenes, environment, AppKit delegate
-│       ├── Hotkey/ Paste/ HUD/ MenuBar/ UI/
-│       └── Info.plist            # mic usage + LSUIElement (embedded via linker)
-└── Tests/VoixfulKitTests/        # headless smoke coverage (no model, no GUI)
+│   │   ├── Catalog/ Settings/ Store/ Support/
+│   │   └── Session/{AppState,AudioCapture,TranscriberFactory,
+│   │               DictationEngine,InProcessDictationEngine,DictationController}.swift
+│   ├── VoixfulEngineHelper/      # main.swift  (the sidecar)
+│   └── VoixfulApp/               # macOS SwiftUI UI process
+│       ├── App/ Engine/ Hotkey/ Paste/ HUD/ MenuBar/ UI/
+│       └── Info.plist
+├── scripts/make-app.sh           # bundle both binaries into Voixful.app
+└── Tests/VoixfulKitTests/        # catalog/settings + IPC framing + real sidecar handshake
 ```
 
 ## Build & run
 
 ```bash
 cd app
-swift build                 # compiles VoixfulKit + VoixfulApp against the core
-swift test                  # headless Kit smoke tests
-swift run VoixfulDictation  # launches the menu-bar app
+swift build                 # compiles all four targets against the core
+swift test                  # headless smoke: catalog, settings, IPC, sidecar handshake
+swift run VoixfulDictation  # dev run — UI spawns the sidecar from .build/
 ```
 
-The first launch prompts for two permissions:
+For a real, double-clickable GUI app (menu-bar item, stable permissions):
 
-1. **Microphone** — to capture your speech (declared in the embedded Info.plist).
-2. **Accessibility / Input Monitoring** — for the global push-to-talk hotkey and
-   paste-at-cursor. Grant it in *System Settings → Privacy & Security*, then
-   relaunch.
+```bash
+./scripts/make-app.sh       # → build/Voixful.app  (bundles both binaries, ad-hoc signs)
+open build/Voixful.app
+```
 
-> `swift run` produces a bare executable, not a signed `.app` bundle. That's fine
-> for development. For distribution, wrap the binary in an app bundle with the
-> `Info.plist`, code-sign, and notarize.
+The first launch prompts for two permissions — grant both, then **relaunch**:
+
+1. **Microphone** — to capture your speech.
+2. **Accessibility** (and **Input Monitoring** if separately prompted) — for the
+   global push-to-talk hotkey and paste-at-cursor.
+
+> `swift run` works for development (the UI finds the sidecar next to itself in
+> `.build/`). `make-app.sh` ad-hoc signs for local use; for distribution, swap in
+> a Developer ID identity and notarize the bundle.
 
 ## Models
 

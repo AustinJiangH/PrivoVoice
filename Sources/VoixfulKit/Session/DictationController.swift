@@ -1,17 +1,14 @@
-// The dictation session orchestrator — the reusable heart of the app.
+// The dictation session orchestrator — engine-agnostic.
 //
-// Given the selected model, it builds a `Transcribing` module, captures the mic,
-// drives a `VoixfulAnalyzer`, and publishes phase / level / partial text into
-// `AppState`. `start()` on push-to-talk key-down, `stop()` on key-up; the final
-// transcript is handed to `onFinalTranscript` (the app layer pastes/copies it).
-//
-// UI-agnostic and platform-portable: the macOS app and a future iOS app both
-// drive it the same way.
+// Owns the microphone, forwards mono audio + a level to an injected
+// `DictationEngine` (in-process, or the sidecar in the macOS app), and publishes
+// phase / level / partial text into `AppState`. `start()` on push-to-talk
+// key-down, `stop()` on key-up; the final transcript is handed to
+// `onFinalTranscript` (the app layer pastes/copies it).
 
 import AVFoundation
 import Foundation
 import Observation
-import VoixfulSpeech
 import VoixfulEngine
 
 @MainActor
@@ -20,27 +17,30 @@ public final class DictationController {
     public let appState: AppState
     private let settings: AppSettings
     private let store: ModelStore
+    private let engine: any DictationEngine
 
     /// Delivered the final transcript when a session completes (non-empty only).
     public var onFinalTranscript: ((String) -> Void)?
 
-    /// Bundle of everything one live session owns, so `stop()` can tear it down.
-    private struct Session: Sendable {
+    /// Everything one live session owns.
+    private final class Session {
         let capture: AudioCapture
-        let analyzer: VoixfulAnalyzer
-        let startTask: Task<Void, Error>
-        let reader: Task<String?, Never>
-        let levelPoll: Task<Void, Never>
+        var run: Task<Void, Never>?
+        init(capture: AudioCapture) { self.capture = capture }
     }
-    private var session: Session?
+    private var active: Session?
 
-    public init(appState: AppState, settings: AppSettings, store: ModelStore) {
+    public init(
+        appState: AppState, settings: AppSettings, store: ModelStore,
+        engine: any DictationEngine
+    ) {
         self.appState = appState
         self.settings = settings
         self.store = store
+        self.engine = engine
     }
 
-    public var isRunning: Bool { session != nil }
+    public var isRunning: Bool { active != nil }
 
     /// A model is selected AND installed — a precondition for `start()`.
     public var canStart: Bool { resolveModel() != nil }
@@ -49,89 +49,70 @@ public final class DictationController {
 
     /// Begin a push-to-talk session (key-down). No-op if one is already running.
     public func start() {
-        guard session == nil else { return }
+        guard active == nil else { return }
         guard let (spec, url) = resolveModel() else {
             appState.lastError = "Select and install a model in the Models tab first."
             return
         }
 
-        // Build the transcriber first so a bad model fails before we open the mic.
-        let transcriber: any Transcribing
-        do {
-            transcriber = try TranscriberFactory.makeLive(
-                modelURL: url, backend: spec.backend,
-                locale: Locale(identifier: settings.localeIdentifier))
-        } catch {
-            appState.lastError = "Could not load \(spec.displayName): \(error)"
-            return
-        }
-
         let capture = AudioCapture()
-        let stream = capture.makeStream()
-        do {
-            try capture.start()
-        } catch {
-            appState.lastError = "\(error)"
+        guard let inputFormat = capture.inputFormat() else {
+            appState.lastError = "No microphone is configured."
             return
         }
+        // We downmix to mono before feeding the engine.
+        let format = AudioStreamFormat(sampleRate: inputFormat.sampleRate, channels: 1)
+        let locale = Locale(identifier: settings.localeIdentifier)
 
-        let analyzer = VoixfulAnalyzer(modules: [transcriber])
         appState.lastError = nil
         appState.setPhase(.listening)
 
-        // Read results: partials refresh the HUD; the last final is the payload.
-        let reader = Task { @MainActor [appState] () -> String? in
-            var lastFinal: String?
+        let session = Session(capture: capture)
+        active = session
+        let engine = self.engine
+        let appState = self.appState
+
+        session.run = Task { @MainActor in
             do {
-                for try await result in transcriber.results {
-                    let text = String(result.text.characters)
-                    if result.isFinal { lastFinal = text }
-                    else { appState.setPartial(text) }
-                }
+                try await engine.begin(
+                    modelURL: url, backend: spec.backend, locale: locale, format: format,
+                    onPartial: { text in Task { @MainActor in appState.setPartial(text) } })
             } catch {
-                appState.lastError = "Transcription error: \(error)"
+                appState.lastError = "Could not start \(spec.displayName): \(error)"
+                return
             }
-            return lastFinal
-        }
+            // A very quick tap may have already requested stop.
+            if Task.isCancelled { return }
 
-        // Load the model + start pumping audio. Kept as a handle so `stop()` can
-        // wait for cold-start to finish before finalizing.
-        let startTask = Task { try await analyzer.start(inputSequence: stream) }
+            let stream = capture.makeStream()
+            do {
+                try capture.start()
+            } catch {
+                appState.lastError = "\(error)"
+                return
+            }
 
-        // Poll the mic level ~20×/s for the HUD meter.
-        let levelPoll = Task { @MainActor [appState] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-                appState.setLevel(capture.sampleLevel())
+            // Forward mic audio until the stream ends (stop() ends it).
+            for await input in stream {
+                if Task.isCancelled { break }
+                let (samples, peak) = Self.monoSamples(input.buffer)
+                appState.setLevel(peak)
+                await engine.feed(samples)
             }
         }
-
-        session = Session(
-            capture: capture, analyzer: analyzer,
-            startTask: startTask, reader: reader, levelPoll: levelPoll)
     }
 
     /// End the session (key-up): stop the mic, finalize, deliver the transcript.
     public func stop() {
-        guard let s = session else { return }
-        session = nil
+        guard let session = active else { return }
+        active = nil
         appState.setPhase(.transcribing)
-        s.levelPoll.cancel()
-        s.capture.stop()   // finishes the input stream so the analyzer pump drains
+        session.run?.cancel()     // short-circuits a not-yet-capturing session
+        session.capture.stop()    // ends the stream so the forwarder drains
 
         Task { @MainActor in
-            do {
-                try await s.startTask.value   // ensure cold-start finished
-                try await s.analyzer.finalizeAndFinishThroughEndOfInput()
-            } catch {
-                // Cold-start (model load) or finalize failed. `prepare()` throwing
-                // never closes the transcriber's result stream, so cancel the
-                // analyzer to finish it — otherwise the reader below awaits a
-                // stream that never ends and this task (and the UI) wedges.
-                appState.lastError = "Dictation failed: \(error)"
-                await s.analyzer.cancelAndFinishNow()
-            }
-            let final = (await s.reader.value ?? "")
+            _ = await session.run?.value          // let forwarding drain
+            let final = ((try? await engine.end()) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             appState.setPhase(.idle)
             appState.reset()
@@ -145,13 +126,11 @@ public final class DictationController {
 
     /// Hard-cancel without finalizing (e.g. app quit).
     public func cancel() {
-        guard let s = session else { return }
-        session = nil
-        s.levelPoll.cancel()
-        s.reader.cancel()
-        s.startTask.cancel()
-        s.capture.stop()
-        Task { await s.analyzer.cancelAndFinishNow() }
+        guard let session = active else { return }
+        active = nil
+        session.run?.cancel()
+        session.capture.stop()
+        Task { await engine.cancel() }
         appState.setPhase(.idle)
         appState.reset()
     }
@@ -163,5 +142,22 @@ public final class DictationController {
               let spec = ModelCatalog.spec(id: id),
               store.isInstalled(spec) else { return nil }
         return (spec, store.installURL(for: spec))
+    }
+
+    /// Downmix all channels to mono and return the samples plus the peak (0…1).
+    private static func monoSamples(_ buffer: AVAudioPCMBuffer) -> ([Float], Float) {
+        let n = Int(buffer.frameLength)
+        guard n > 0, let channels = buffer.floatChannelData else { return ([], 0) }
+        let channelCount = Int(buffer.format.channelCount)
+        var out = [Float](repeating: 0, count: n)
+        var peak: Float = 0
+        for i in 0..<n {
+            var sum: Float = 0
+            for c in 0..<channelCount { sum += channels[c][i] }
+            let v = sum / Float(channelCount)
+            out[i] = v
+            peak = max(peak, abs(v))
+        }
+        return (out, min(1, peak))
     }
 }
