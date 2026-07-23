@@ -104,19 +104,15 @@ open build/Voixful.app
 Permissions:
 
 1. **Microphone** — to capture your speech.
-2. **Accessibility** — to paste the transcript, and for `fn` / bare-key shortcuts.
+2. **Accessibility** — for the push-to-talk hotkey and to paste the transcript.
 
-> **No Input Monitoring, ever.** The hotkey is hybrid:
-> - **Registerable chords** (a key + ⌘⌥⌃⇧, or a function key like ⌥Space / F5)
->   use Carbon `RegisterEventHotKey` — **zero permissions**, and the chord is
->   consumed (it won't type).
-> - **`fn`, modifier-only, and bare-key** shortcuts use an `NSEvent` global
->   monitor, which needs only **Accessibility** — the same grant used to paste,
->   the way Wispr Flow does its default `fn` push-to-talk.
->
-> Default is **hold `fn`** (types nothing). The `NSEvent` path is listen-only, so
-> a *printable* trigger key (e.g. the Space in `fn`+Space) also types — prefer
-> `fn` alone, a function key, or a Carbon chord to avoid that.
+> **No Input Monitoring, ever.** The hotkey is a **consuming `CGEventTap`**
+> (`kCGEventTapOptionDefault`) — the same approach Handy and OpenSuperWhisper use.
+> A *consuming* tap requires **Accessibility**, not Input Monitoring (only the
+> passive `.listenOnly` tap needs Input Monitoring). Since Accessibility is
+> already needed to paste, the hotkey costs no extra permission. It works with
+> **any** key or chord — including `fn`+Space and bare keys — and **consumes** the
+> trigger, so it never types while you dictate. Default is **hold `fn`**.
 
 > `swift run` works for development (the UI finds the sidecar next to itself in
 > `.build/`). `make-app.sh` ad-hoc signs for local use; for distribution, swap in
@@ -136,10 +132,9 @@ and the weights license.
 
 ## Notes & limitations
 
-- The push-to-talk hotkey is **hybrid** — Carbon (zero permission, consumed) for
-  key+modifier / function-key chords, and an `NSEvent` monitor (Accessibility, no
-  Input Monitoring) for `fn` / bare keys. Any shortcut works; `fn` alone is the
-  cleanest since nothing types.
+- The push-to-talk hotkey is a **consuming `CGEventTap`** (Accessibility, no Input
+  Monitoring). Any key/chord works — `fn`, `fn`+Space, bare keys — and the trigger
+  is consumed so it never types.
 - Native streaming (live words) is Nemotron only; every other backend
   re-transcribes the growing utterance for live partials (see the root README's
   support matrix).

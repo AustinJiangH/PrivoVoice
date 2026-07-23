@@ -89,16 +89,6 @@ final class KeyComboTests: XCTestCase {
         XCTAssertFalse(KeyCombo(keyCode: nil, modifiers: [.option]).isRegisterableHotkey)
     }
 
-    func testTypesWhileHeld() {
-        // fn+printable key and bare printable key type (listen-only monitor path).
-        XCTAssertTrue(KeyCombo(keyCode: 50, keyLabel: "`", modifiers: [.function]).typesWhileHeld)
-        XCTAssertTrue(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: []).typesWhileHeld)
-        // fn alone / Carbon chords / function keys don't type.
-        XCTAssertFalse(KeyCombo(keyCode: nil, modifiers: [.function]).typesWhileHeld)
-        XCTAssertFalse(KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option]).typesWhileHeld)
-        XCTAssertFalse(KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: []).typesWhileHeld)
-    }
-
     func testCodableRoundTrip() throws {
         let combo = KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: [.command, .option])
         let data = try JSONEncoder().encode(combo)

@@ -24,18 +24,10 @@ struct SettingsPane: View {
                     }
                 }
                 Text("Hold the shortcut to record; release to transcribe and paste. Any key or "
-                     + "chord works — `fn` alone is cleanest (nothing types). No Input Monitoring "
-                     + "needed.")
+                     + "chord works — including `fn`+Space — and the trigger is consumed so it "
+                     + "doesn't type. Needs Accessibility (same as pasting); no Input Monitoring.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
-                if settings.hotkey.typesWhileHeld {
-                    Label("This key also types while you dictate. Use `fn` alone, a function key, "
-                          + "or add ⌘/⌥/⌃/⇧ so the chord is consumed.",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
 
                 Toggle("Copy transcript to clipboard automatically", isOn: $settings.autoCopy)
 

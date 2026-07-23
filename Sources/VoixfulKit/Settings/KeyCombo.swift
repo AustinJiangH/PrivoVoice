@@ -63,14 +63,6 @@ public struct KeyCombo: Sendable, Hashable, Codable {
         105, 107, 113, 106, 64, 79, 80, 90,                       // F13–F20
     ]
 
-    /// True when holding this shortcut also *types* its key. That happens for a
-    /// chord with a printable key that isn't Carbon-registerable (so it runs on
-    /// the listen-only NSEvent path and can't be consumed). `fn`-alone /
-    /// modifier-only chords type nothing; Carbon chords (⌥Space, F5) are consumed.
-    public var typesWhileHeld: Bool {
-        keyCode != nil && !isRegisterableHotkey
-    }
-
     /// Whether this chord can be a global hotkey via Carbon `RegisterEventHotKey`:
     /// it needs a key code, and either a ⌘⌥⌃⇧ modifier (`fn` does NOT count —
     /// Carbon has no `fn`) or a function key (safe on its own). This is why a

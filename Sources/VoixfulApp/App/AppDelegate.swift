@@ -4,7 +4,6 @@
 
 import AppKit
 import SwiftUI
-import Observation
 import VoixfulKit
 
 @MainActor
@@ -34,7 +33,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.onPermissionChange = { [weak self] in self?.updatePermissionStatus() }
         monitor.start()
         self.hotkey = monitor
-        observeHotkeyChanges()
         updatePermissionStatus()
     }
 
@@ -47,36 +45,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updatePermissionStatus()
     }
 
-    /// Re-register the Carbon hotkey whenever the user changes the shortcut.
-    private func observeHotkeyChanges() {
-        let settings = AppEnvironment.shared.settings
-        withObservationTracking {
-            _ = settings.hotkey
-        } onChange: {
-            Task { @MainActor in
-                self.hotkey?.refresh()
-                self.updatePermissionStatus()
-                self.observeHotkeyChanges()
-            }
-        }
-    }
-
-    /// Reflect hotkey registration + paste permission in the UI.
+    /// Reflect the single Accessibility permission (hotkey tap + paste) in the UI.
     private func updatePermissionStatus() {
         guard let hotkey else { return }
         let appState = AppEnvironment.shared.appState
         appState.setHotkeyActive(hotkey.isActive)
         appState.setPasteAuthorized(hotkey.canPaste)
-        if !hotkey.isActive && !hotkey.canPaste {
-            // An fn / bare-key shortcut on the NSEvent path needs Accessibility.
+        if !hotkey.isActive {
             appState.lastError = "Grant Accessibility to Voixful in System Settings → Privacy "
-                + "& Security to enable the fn shortcut and pasting (no Input Monitoring needed)."
-        } else if !hotkey.isActive {
-            appState.lastError = "Couldn't arm the shortcut — try a different key or chord in Settings."
-        } else if !hotkey.canPaste {
-            appState.lastError = "Grant Accessibility so the transcript can be pasted at the cursor."
-        } else if appState.lastError?.hasPrefix("Grant ") == true
-                    || appState.lastError?.hasPrefix("Couldn't") == true {
+                + "& Security to enable the shortcut and pasting (no Input Monitoring needed)."
+        } else if appState.lastError?.hasPrefix("Grant ") == true {
             appState.lastError = nil
         }
     }

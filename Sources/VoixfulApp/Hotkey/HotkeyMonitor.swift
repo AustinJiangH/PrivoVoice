@@ -1,18 +1,16 @@
-// Global push-to-talk — hybrid, so ANY shortcut works without ever needing
-// Input Monitoring:
+// Global push-to-talk via a CONSUMING CGEventTap — the same approach Handy uses.
 //
-//   • Registerable chords (a key + ⌘⌥⌃⇧, or a function key) → Carbon
-//     RegisterEventHotKey. Zero permissions, and the chord is CONSUMED (the
-//     trigger key doesn't type).
-//   • fn / modifier-only / bare-key chords → NSEvent global monitor, which needs
-//     only ACCESSIBILITY (the same grant we already use to paste — the way Wispr
-//     Flow does its default `fn` push-to-talk). Not Input Monitoring.
+// The key insight: a consuming tap (`kCGEventTapOptionDefault`) requires
+// ACCESSIBILITY, not Input Monitoring — only the passive `.listenOnly` tap needs
+// Input Monitoring. Since we already need Accessibility to paste, this costs no
+// extra permission, works with ANY key (including `fn`+Space and bare keys), and
+// CONSUMES the trigger so it doesn't type while you dictate.
 //
-// The NSEvent path is listen-only (can't consume), so a *printable* trigger key
-// also types. `fn` alone types nothing, which is why it's the recommended chord.
+// The tap reads `settings.hotkey` live on each event, so changing the shortcut
+// takes effect immediately with no re-registration.
 
 import AppKit
-import Carbon.HIToolbox
+import CoreGraphics
 import VoixfulKit
 
 @MainActor
@@ -22,193 +20,180 @@ final class HotkeyMonitor {
     var onPermissionChange: (@MainActor () -> Void)?
 
     private let settings: AppSettings
-
-    // Carbon backend
-    private var hotKeyRef: EventHotKeyRef?
-    private var carbonHandler: EventHandlerRef?
-    // NSEvent backend
-    private var globalMonitor: Any?
-    private var localMonitor: Any?
+    private var tap: CFMachPort?
+    private var source: CFRunLoopSource?
     private var isDown = false
+    private var retryTimer: Timer?
 
-    private var activeCombo: KeyCombo?
-    private enum Backend { case none, carbon, monitor }
-    private var backend: Backend = .none
-
-    /// The shortcut is armed and will fire.
+    /// Tap installed — implies Accessibility is granted (which also enables paste).
     private(set) var isActive = false
-    /// Accessibility granted — needed to paste, and for the NSEvent (fn/bare-key)
-    /// hotkey path.
-    private(set) var canPaste = false
+    /// Accessibility is the single permission; the hotkey tap and paste share it.
+    var canPaste: Bool { isActive }
 
     init(settings: AppSettings) {
         self.settings = settings
     }
 
     func start() {
-        installCarbonHandler()
-        canPaste = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-        apply()
+        // Prompt for Accessibility — covers both the consuming tap and the paste.
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+        installTap()
+        scheduleRetry()
         onPermissionChange?()
     }
 
-    /// Re-arm on shortcut change or after the user grants Accessibility.
+    /// Install the tap if permission was just granted (called on app focus).
     func refresh() {
-        let paste = AXIsProcessTrusted()
-        let permChanged = paste != canPaste
-        canPaste = paste
-        // Re-apply if the shortcut changed, or if permission changed and we're on
-        // the (Accessibility-dependent) monitor path.
-        if activeCombo != settings.hotkey || (permChanged && backend == .monitor) {
-            apply()
-        }
-        if permChanged { onPermissionChange?() }
+        installTap()
+        scheduleRetry()
+        onPermissionChange?()
     }
 
     func stop() {
-        teardownActive()
-        if let carbonHandler { RemoveEventHandler(carbonHandler) }
-        carbonHandler = nil
+        removeTap()
+        retryTimer?.invalidate()
+        retryTimer = nil
     }
 
-    // MARK: Backend selection
+    // MARK: Tap lifecycle
 
-    private func apply() {
-        teardownActive()
-        let combo = settings.hotkey
-        activeCombo = combo
-        isDown = false
-        guard !combo.isEmpty else { isActive = false; onPermissionChange?(); return }
+    private func installTap() {
+        guard tap == nil else { return }
+        // A consuming tap needs the process trusted for Accessibility.
+        guard AXIsProcessTrusted() else { isActive = false; return }
 
-        if combo.isRegisterableHotkey {
-            registerCarbon(combo)
-        } else {
-            installMonitor(combo)
-        }
-        onPermissionChange?()
-    }
+        let mask: CGEventMask =
+            (1 << CGEventType.keyDown.rawValue) |
+            (1 << CGEventType.keyUp.rawValue) |
+            (1 << CGEventType.flagsChanged.rawValue)
 
-    private func teardownActive() {
-        unregisterCarbon()
-        if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
-        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
-        globalMonitor = nil
-        localMonitor = nil
-        backend = .none
-        isActive = false
-    }
-
-    // MARK: Carbon (consumes; no permission)
-
-    private func installCarbonHandler() {
-        guard carbonHandler == nil else { return }
-        var types = [
-            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
-            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
-        ]
-        let userData = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, event, userData in
-                guard let event, let userData else { return noErr }
-                let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userData).takeUnretainedValue()
-                let kind = GetEventKind(event)
-                MainActor.assumeIsolated {
-                    if kind == UInt32(kEventHotKeyPressed) { monitor.onPress?() }
-                    else if kind == UInt32(kEventHotKeyReleased) { monitor.onRelease?() }
-                }
-                return noErr
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,          // consuming: needs Accessibility, can swallow keys
+            eventsOfInterest: mask,
+            callback: { _, type, event, refcon in
+                guard let refcon else { return Unmanaged.passUnretained(event) }
+                let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(refcon).takeUnretainedValue()
+                // The tap runs on the main run loop. `handle` returns whether to
+                // consume; build the Unmanaged here (CGEvent isn't Sendable, so it
+                // can't cross the assumeIsolated boundary).
+                let consume = MainActor.assumeIsolated { monitor.handle(type: type, event: event) }
+                return consume ? nil : Unmanaged.passUnretained(event)
             },
-            2, &types, userData, &carbonHandler)
-    }
-
-    private func registerCarbon(_ combo: KeyCombo) {
-        guard let keyCode = combo.keyCode else { isActive = false; return }
-        let hotKeyID = EventHotKeyID(signature: OSType(0x564F4958 /* 'VOIX' */), id: 1)
-        var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(
-            UInt32(keyCode), carbonModifiers(combo.modifiers), hotKeyID,
-            GetApplicationEventTarget(), 0, &ref)
-        if status == noErr {
-            hotKeyRef = ref
-            backend = .carbon
-            isActive = true
-        } else {
+            userInfo: refcon
+        ) else {
             isActive = false
-        }
-    }
-
-    private func unregisterCarbon() {
-        if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
-        hotKeyRef = nil
-    }
-
-    private func carbonModifiers(_ mods: KeyModifiers) -> UInt32 {
-        var flags: UInt32 = 0
-        if mods.contains(.command) { flags |= UInt32(cmdKey) }
-        if mods.contains(.option) { flags |= UInt32(optionKey) }
-        if mods.contains(.control) { flags |= UInt32(controlKey) }
-        if mods.contains(.shift) { flags |= UInt32(shiftKey) }
-        return flags
-    }
-
-    // MARK: NSEvent monitor (fn / modifier-only / bare keys; Accessibility)
-
-    private func installMonitor(_ combo: KeyCombo) {
-        backend = .monitor
-        // The global monitor only delivers events with Accessibility granted.
-        guard canPaste else { isActive = false; return }
-
-        let handler: (NSEvent) -> Void = { [weak self] event in
-            MainActor.assumeIsolated { self?.handleMonitorEvent(event) }
-        }
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.keyDown, .keyUp, .flagsChanged], handler: handler)
-        // Also fire when Voixful's own window is focused (returns the event so it
-        // isn't swallowed).
-        localMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
-                MainActor.assumeIsolated { self?.handleMonitorEvent(event) }
-                return event
-            }
-        isActive = true
-    }
-
-    private func handleMonitorEvent(_ event: NSEvent) {
-        guard let combo = activeCombo else { return }
-        let held = Self.keyModifiers(event.modifierFlags)
-
-        if combo.isModifierOnly {
-            // fn / other modifier-only: engaged when the required modifiers are held.
-            if event.type == .flagsChanged {
-                transition(to: combo.modifiers.isSubset(of: held))
-            }
             return
         }
 
-        guard let keyCode = combo.keyCode else { return }
-        switch event.type {
-        case .keyDown where event.keyCode == keyCode:
-            if combo.modifiers.isSubset(of: held) { transition(to: true) }
-        case .keyUp where event.keyCode == keyCode:
-            transition(to: false)
-        default:
-            break
+        self.tap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        self.source = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        isActive = true
+    }
+
+    private func removeTap() {
+        if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        tap = nil
+        source = nil
+        isActive = false
+        isDown = false
+    }
+
+    /// Poll for Accessibility until the tap installs — a menu-bar app can't rely
+    /// on `applicationDidBecomeActive` firing after the user grants it.
+    private func scheduleRetry() {
+        if isActive { retryTimer?.invalidate(); retryTimer = nil; return }
+        guard retryTimer == nil else { return }
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.installTap()
+                self.onPermissionChange?()
+                if self.isActive { self.retryTimer?.invalidate(); self.retryTimer = nil }
+            }
         }
     }
 
-    private func transition(to engaged: Bool) {
-        if engaged, !isDown { isDown = true; onPress?() }
-        else if !engaged, isDown { isDown = false; onRelease?() }
+    // MARK: Matching
+
+    /// Returns `true` to consume (swallow) the event so its key doesn't type.
+    private func handle(type: CGEventType, event: CGEvent) -> Bool {
+        // Re-enable if the system disabled the tap (slow callback / input storm).
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return false
+        }
+
+        let combo = settings.hotkey
+        guard !combo.isEmpty else { return false }
+        let flags = event.flags
+
+        if combo.isModifierOnly {
+            // fn / modifier-only: fire on the modifier engaging/disengaging.
+            // Don't consume — modifier keys don't type, and swallowing a
+            // flagsChanged would corrupt global modifier state.
+            if type == .flagsChanged {
+                transition(to: satisfies(flags, combo.modifiers))
+            }
+            return false
+        }
+
+        guard let keyCode = combo.keyCode else { return false }
+        let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        switch type {
+        case .keyDown where code == keyCode:
+            if satisfies(flags, combo.modifiers) {
+                transition(to: true)
+                return true   // CONSUME → the trigger key doesn't type
+            }
+            return false
+        case .keyUp where code == keyCode:
+            if isDown {
+                transition(to: false)
+                return true   // consume the matching key-up too
+            }
+            return false
+        default:
+            return false
+        }
     }
 
-    private static func keyModifiers(_ flags: NSEvent.ModifierFlags) -> KeyModifiers {
-        var m: KeyModifiers = []
-        if flags.contains(.command) { m.insert(.command) }
-        if flags.contains(.option) { m.insert(.option) }
-        if flags.contains(.control) { m.insert(.control) }
-        if flags.contains(.shift) { m.insert(.shift) }
-        if flags.contains(.function) { m.insert(.function) }
-        return m
+    /// Edge-detect, and defer the (possibly slow) start/stop off the tap callback
+    /// so it returns immediately and the tap stays responsive.
+    private func transition(to engaged: Bool) {
+        if engaged, !isDown {
+            isDown = true
+            let cb = onPress
+            Task { @MainActor in cb?() }
+        } else if !engaged, isDown {
+            isDown = false
+            let cb = onRelease
+            Task { @MainActor in cb?() }
+        }
+    }
+
+    /// Exact-match the ⌘⌥⌃⇧ modifiers (so extra held modifiers don't over-trigger)
+    /// while requiring any `fn` in the chord to be present.
+    private func satisfies(_ flags: CGEventFlags, _ mods: KeyModifiers) -> Bool {
+        let required = requiredFlags(mods)
+        guard flags.contains(required) else { return false }
+        let chord: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
+        return flags.intersection(chord) == required.intersection(chord)
+    }
+
+    private func requiredFlags(_ mods: KeyModifiers) -> CGEventFlags {
+        var flags: CGEventFlags = []
+        if mods.contains(.command) { flags.insert(.maskCommand) }
+        if mods.contains(.option) { flags.insert(.maskAlternate) }
+        if mods.contains(.control) { flags.insert(.maskControl) }
+        if mods.contains(.shift) { flags.insert(.maskShift) }
+        if mods.contains(.function) { flags.insert(.maskSecondaryFn) }
+        return flags
     }
 }
