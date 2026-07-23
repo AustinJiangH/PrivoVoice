@@ -17,6 +17,7 @@ final class AppEnvironment {
     let downloader: ModelDownloader
     let appState: AppState
     let dictation: DictationController
+    let telemetry: Telemetry
     let route = Router()
 
     private init() {
@@ -28,14 +29,19 @@ final class AppEnvironment {
         let appState = AppState()
         self.appState = appState
 
+        // Usage totals for the Dashboard (local) + opt-in reporting (off by default).
+        let telemetry = Telemetry(settings: settings)
+        self.telemetry = telemetry
+
         // Two-process: transcription runs in the sidecar, isolated from the UI.
         let engine = HelperProcessDictationEngine(helperURL: Self.resolveHelperURL())
         self.dictation = DictationController(
-            appState: appState, settings: settings, store: store, engine: engine)
+            appState: appState, settings: settings, store: store, engine: engine,
+            telemetry: telemetry)
 
-        // First-run landing: Models when nothing is installed yet, else Settings.
-        // Set once here so an explicit menu-bar jump isn't clobbered on window open.
-        route.selection = store.installedIDs.isEmpty ? .models : .settings
+        // First-run landing: Models when nothing is installed yet, else the
+        // Dashboard. Set once here so an explicit menu-bar jump isn't clobbered.
+        route.selection = store.installedIDs.isEmpty ? .models : .dashboard
     }
 
     /// Locate the `PrivoVoiceHelper` sidecar: an env override (dev), else a

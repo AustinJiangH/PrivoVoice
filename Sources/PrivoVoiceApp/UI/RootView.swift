@@ -6,17 +6,19 @@ import PrivoVoiceKit
 
 /// Sidebar destinations.
 enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
-    case settings, models
+    case dashboard, settings, models
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .dashboard: return "Dashboard"
         case .settings: return "Settings"
         case .models: return "Models"
         }
     }
     var systemImage: String {
         switch self {
+        case .dashboard: return "chart.bar.xaxis"
         case .settings: return "gearshape"
         case .models: return "square.stack.3d.up"
         }
@@ -48,6 +50,7 @@ struct RootView: View {
             }
         } detail: {
             switch route.selection {
+            case .dashboard: DashboardPane()
             case .settings: SettingsPane()
             case .models: ModelsPane()
             }

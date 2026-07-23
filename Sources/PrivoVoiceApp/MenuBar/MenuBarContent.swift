@@ -29,6 +29,12 @@ struct MenuBarContent: View {
         }
         .keyboardShortcut("o")
 
+        Button("Dashboard") {
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: WindowID.main)
+            env.route.select(.dashboard)
+        }
+
         Button("Settings") {
             NSApp.activate(ignoringOtherApps: true)
             openWindow(id: WindowID.main)
