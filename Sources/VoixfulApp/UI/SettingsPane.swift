@@ -29,6 +29,14 @@ struct SettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                if settings.hotkey.typesWhileHeld {
+                    Label("This key also types while you dictate. Use `fn` alone, a function key, "
+                          + "or add ⌘/⌥/⌃/⇧ so the chord is consumed.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
                 Toggle("Copy transcript to clipboard automatically", isOn: $settings.autoCopy)
 
                 LabeledContent("Hotkey") {
