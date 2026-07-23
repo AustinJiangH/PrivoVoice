@@ -1,0 +1,5 @@
+.build/
+build/
+*.aimodel
+.DS_Store
+.swiftpm/

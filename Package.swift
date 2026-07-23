@@ -29,9 +29,9 @@ let package = Package(
         .executable(name: "PrivoVoiceHelper", targets: ["PrivoVoiceHelper"]),
     ],
     dependencies: [
-        // The Voixful core lives one directory up. Local path keeps the app in
+        // The Voixful engine package lives alongside this one (../voixful). Local path keeps the app in
         // lock-step with the engine it dogfoods.
-        .package(path: ".."),
+        .package(path: "../voixful"),
     ],
     targets: [
         // MARK: Cross-process wire protocol (Foundation-only, both processes share)
