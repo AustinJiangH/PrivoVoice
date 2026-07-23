@@ -1,4 +1,4 @@
-# Voixful for macOS
+# PrivoVoice for macOS
 
 A push-to-talk dictation app for Apple Silicon, built entirely on the Voixful
 core API (the package one directory up). Hold a key, speak, release — the
@@ -17,7 +17,7 @@ Apple Core AI; no audio leaves your Mac.
   listening and a shimmer while transcribing — animation only, no window focus.
 - **Menu-bar app.** A status item reflects the global state (idle / listening /
   transcribing) and opens Settings or quits.
-- **Model management.** Browse every Voixful checkpoint, filter by language,
+- **Model management.** Browse every model checkpoint, filter by language,
   download (or import a local `.aimodel`), select one, and delete the rest.
 
 ## Architecture — a reusable core
@@ -35,7 +35,7 @@ length-prefixed stdio protocol (no XPC service / Xcode entitlements needed).
 
 ```
 ┌────────────────────────┐   stdio frames    ┌──────────────────────────┐
-│ VoixfulDictation (UI)  │  begin / audio →  │ VoixfulEngineHelper      │
+│ PrivoVoice (UI)  │  begin / audio →  │ PrivoVoiceHelper      │
 │  menu bar · hotkey ·   │  ← partial/final  │  loads the .aimodel and  │
 │  mic · HUD · paste     │                   │  drives VoixfulAnalyzer  │
 └────────────────────────┘                   └──────────────────────────┘
@@ -49,30 +49,30 @@ the UI respawns it on the next dictation.
 
 | Target | Platform | Contents |
 |---|---|---|
-| **`VoixfulKit`** | portable (macOS / iOS) | Catalog, download/store, settings, `AppState`, `AudioCapture`, `DictationController`, and the `DictationEngine` protocol + `InProcessDictationEngine`. No AppKit/SwiftUI. |
-| **`VoixfulIPC`** | portable | The tiny wire protocol (message enums + framing) shared by both processes. |
-| **`VoixfulApp`** | macOS | SwiftUI sidebar (Settings + Models), HUD, menu-bar item, hotkey, paste, and `HelperProcessDictationEngine` (spawns the sidecar). |
-| **`VoixfulEngineHelper`** | macOS | The resident engine process. Runs an `InProcessDictationEngine` behind the IPC protocol. |
+| **`PrivoVoiceKit`** | portable (macOS / iOS) | Catalog, download/store, settings, `AppState`, `AudioCapture`, `DictationController`, and the `DictationEngine` protocol + `InProcessDictationEngine`. No AppKit/SwiftUI. |
+| **`PrivoVoiceIPC`** | portable | The tiny wire protocol (message enums + framing) shared by both processes. |
+| **`PrivoVoiceApp`** | macOS | SwiftUI sidebar (Settings + Models), HUD, menu-bar item, hotkey, paste, and `HelperProcessDictationEngine` (spawns the sidecar). |
+| **`PrivoVoiceHelper`** | macOS | The resident engine process. Runs an `InProcessDictationEngine` behind the IPC protocol. |
 
 The split hides behind the `DictationEngine` protocol: macOS injects the
 sidecar-backed engine; a future **iOS** app (which can't spawn processes) reuses
-`VoixfulKit` with the `InProcessDictationEngine` instead — no other change.
+`PrivoVoiceKit` with the `InProcessDictationEngine` instead — no other change.
 
 ```
 app/
 ├── Package.swift
 ├── Sources/
-│   ├── VoixfulIPC/                # Protocol.swift, Frame.swift  (shared)
-│   ├── VoixfulKit/               # reusable core
+│   ├── PrivoVoiceIPC/                # Protocol.swift, Frame.swift  (shared)
+│   ├── PrivoVoiceKit/               # reusable core
 │   │   ├── Catalog/ Settings/ Store/ Support/
 │   │   └── Session/{AppState,AudioCapture,TranscriberFactory,
 │   │               DictationEngine,InProcessDictationEngine,DictationController}.swift
-│   ├── VoixfulEngineHelper/      # main.swift  (the sidecar)
-│   └── VoixfulApp/               # macOS SwiftUI UI process
+│   ├── PrivoVoiceHelper/      # main.swift  (the sidecar)
+│   └── PrivoVoiceApp/               # macOS SwiftUI UI process
 │       ├── App/ Engine/ Hotkey/ Paste/ HUD/ MenuBar/ UI/
 │       └── Info.plist
-├── scripts/make-app.sh           # bundle both binaries into Voixful.app
-└── Tests/VoixfulKitTests/        # catalog/settings + IPC framing + real sidecar handshake
+├── scripts/make-app.sh           # bundle both binaries into PrivoVoice.app
+└── Tests/PrivoVoiceKitTests/        # catalog/settings + IPC framing + real sidecar handshake
 ```
 
 ## Build & run
@@ -81,7 +81,7 @@ app/
 cd app
 swift build                 # compiles all four targets against the core
 swift test                  # headless smoke: catalog, settings, IPC, sidecar handshake
-swift run VoixfulDictation  # dev run — UI spawns the sidecar from .build/
+swift run PrivoVoice  # dev run — UI spawns the sidecar from .build/
 ```
 
 For a real, double-clickable GUI app (menu-bar item, stable permissions):
@@ -89,14 +89,14 @@ For a real, double-clickable GUI app (menu-bar item, stable permissions):
 ```bash
 ./scripts/setup-signing.sh  # ONCE: create a stable self-signed identity so TCC
                             # grants (Microphone/Accessibility) persist
-./scripts/make-app.sh       # → build/Voixful.app  (bundles both binaries, signs)
-open build/Voixful.app
+./scripts/make-app.sh       # → build/PrivoVoice.app  (bundles both binaries, signs)
+open build/PrivoVoice.app
 ```
 
 > **Run `setup-signing.sh` once.** Without it, `make-app.sh` falls back to ad-hoc
 > signing, which changes the app's identity every build — so macOS forgets your
 > Microphone / Accessibility grants and dictation silently stops working
-> after each rebuild. The self-signed "Voixful Dev" identity keeps one stable
+> after each rebuild. The self-signed "PrivoVoice Dev" identity keeps one stable
 > signature (needs Homebrew `openssl@3`; the first `codesign` shows one keychain
 > prompt — click **Always Allow**). Local dev only; use a Developer ID to
 > distribute.
@@ -122,7 +122,7 @@ Permissions:
 ## Models
 
 Selecting a model in the **Models** tab downloads its `.aimodel` into the storage
-location (default `~/Library/Voixful/Models/`, changeable in Settings). Until the
+location (default `~/Library/PrivoVoice/Models/`, changeable in Settings). Until the
 converted assets are published to Hugging Face, use **Import…** on a card to
 install a locally-converted asset (see [`../convert/`](../convert)); download
 surfaces a clear "not yet published" message otherwise.

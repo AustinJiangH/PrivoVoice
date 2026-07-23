@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup-signing.sh — create a stable, self-signed "Voixful Dev" code-signing
+# setup-signing.sh — create a stable, self-signed "PrivoVoice Dev" code-signing
 # identity so macOS TCC permissions (Microphone, Accessibility) PERSIST across
 # rebuilds.
 #
@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-IDENTITY="Voixful Dev"
+IDENTITY="PrivoVoice Dev"
 
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
     echo "[signing] '$IDENTITY' already exists — nothing to do."

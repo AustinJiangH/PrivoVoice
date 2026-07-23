@@ -1,5 +1,5 @@
 // swift-tools-version: 6.0
-// Voixful dictation app — a macOS push-to-talk dictation front-end built on the
+// PrivoVoice dictation app — a macOS push-to-talk dictation front-end built on the
 // Voixful core API (the root package, referenced by local path).
 //
 // Two-process architecture (Handy-style, native): the UI process owns the menu
@@ -8,25 +8,25 @@
 // They talk over a length-prefixed stdio protocol.
 //
 // Targets:
-//   • VoixfulKit           — reusable, UI-agnostic core (catalog, store, settings,
+//   • PrivoVoiceKit           — reusable, UI-agnostic core (catalog, store, settings,
 //                            DictationController + the DictationEngine protocol with
 //                            an in-process impl). Portable to iOS.
-//   • VoixfulIPC           — the tiny wire protocol shared by both processes.
-//   • VoixfulApp           — the macOS SwiftUI UI process (spawns the engine).
-//   • VoixfulEngineHelper  — the resident engine process (the sidecar).
+//   • PrivoVoiceIPC           — the tiny wire protocol shared by both processes.
+//   • PrivoVoiceApp           — the macOS SwiftUI UI process (spawns the engine).
+//   • PrivoVoiceHelper  — the resident engine process (the sidecar).
 
 import PackageDescription
 
 let package = Package(
-    name: "VoixfulApp",
+    name: "PrivoVoice",
     platforms: [
         .macOS("27.0"),
     ],
     products: [
-        .library(name: "VoixfulKit", targets: ["VoixfulKit"]),
-        .executable(name: "VoixfulDictation", targets: ["VoixfulApp"]),
+        .library(name: "PrivoVoiceKit", targets: ["PrivoVoiceKit"]),
+        .executable(name: "PrivoVoice", targets: ["PrivoVoiceApp"]),
         // Built as a product so it's always compiled; the UI process spawns it.
-        .executable(name: "VoixfulEngineHelper", targets: ["VoixfulEngineHelper"]),
+        .executable(name: "PrivoVoiceHelper", targets: ["PrivoVoiceHelper"]),
     ],
     dependencies: [
         // The Voixful core lives one directory up. Local path keeps the app in
@@ -35,11 +35,11 @@ let package = Package(
     ],
     targets: [
         // MARK: Cross-process wire protocol (Foundation-only, both processes share)
-        .target(name: "VoixfulIPC"),
+        .target(name: "PrivoVoiceIPC"),
 
         // MARK: Reusable core (portable across macOS / iOS)
         .target(
-            name: "VoixfulKit",
+            name: "PrivoVoiceKit",
             dependencies: [
                 .product(name: "VoixfulSpeech", package: "Voixful"),
                 .product(name: "VoixfulEngine", package: "Voixful"),
@@ -54,14 +54,14 @@ let package = Package(
 
         // MARK: Engine process (the sidecar) — loads the model, transcribes
         .executableTarget(
-            name: "VoixfulEngineHelper",
-            dependencies: ["VoixfulKit", "VoixfulIPC"]
+            name: "PrivoVoiceHelper",
+            dependencies: ["PrivoVoiceKit", "PrivoVoiceIPC"]
         ),
 
         // MARK: macOS SwiftUI app (UI process)
         .executableTarget(
-            name: "VoixfulApp",
-            dependencies: ["VoixfulKit", "VoixfulIPC"],
+            name: "PrivoVoiceApp",
+            dependencies: ["PrivoVoiceKit", "PrivoVoiceIPC"],
             // Embed an Info.plist so macOS TCC grants REAL microphone audio (a
             // bare SwiftPM binary is otherwise fed silence) and the process runs
             // as a menu-bar accessory. Same linker trick the root CLI uses.
@@ -70,15 +70,15 @@ let package = Package(
                     "-Xlinker", "-sectcreate",
                     "-Xlinker", "__TEXT",
                     "-Xlinker", "__info_plist",
-                    "-Xlinker", "Sources/VoixfulApp/Info.plist",
+                    "-Xlinker", "Sources/PrivoVoiceApp/Info.plist",
                 ])
             ]
         ),
 
         // MARK: Kit unit tests (headless smoke coverage)
         .testTarget(
-            name: "VoixfulKitTests",
-            dependencies: ["VoixfulKit", "VoixfulIPC"]
+            name: "PrivoVoiceKitTests",
+            dependencies: ["PrivoVoiceKit", "PrivoVoiceIPC"]
         ),
     ]
 )
