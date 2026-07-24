@@ -109,7 +109,8 @@ final class ModelDownloaderTests: XCTestCase {
             id: id, displayName: "Fake", backend: .parakeet, upstreamRepo: "x/y",
             assetName: "\(id)-palette4.aimodel", parameters: "0.6 B", approxSizeMB: 10,
             languages: [LanguageTag("en")], streaming: false, speed: .good, accuracy: .good,
-            weightsLicense: "MIT", werLeaderboard: nil, summary: "", download: download)
+            weightsLicense: "MIT", werLeaderboard: nil, maxAudioSeconds: nil, summary: "",
+            download: download)
     }
 
     @MainActor

@@ -213,6 +213,58 @@ final class TelemetryGatingTests: XCTestCase {
     }
 }
 
+final class RecordingProgressTests: XCTestCase {
+    func testStreamingIsUnboundedAndCountsUp() {
+        let p = RecordingProgress(elapsed: 75, limit: nil)
+        XCTAssertTrue(p.isUnbounded)
+        XCTAssertEqual(p.status, .streaming)
+        XCTAssertNil(p.remaining)
+        XCTAssertEqual(p.fraction, 0)          // no ring for streaming
+        XCTAssertEqual(p.centerText, "1:15")   // count-up
+    }
+
+    func testNormalWindow() {
+        let p = RecordingProgress(elapsed: 10, limit: 40)
+        XCTAssertEqual(p.status, .normal)
+        XCTAssertEqual(p.remaining, 30)
+        XCTAssertEqual(p.fraction, 0.25, accuracy: 0.001)   // ring fills toward limit
+        XCTAssertEqual(p.centerText, "0:10")                // elapsed count-up
+    }
+
+    func testWarningUnderTenSeconds() {
+        let p = RecordingProgress(elapsed: 32, limit: 40)   // 8s from the limit
+        XCTAssertEqual(p.status, .warning)
+        XCTAssertEqual(p.secondaryText, "near limit")       // no numeric countdown
+        XCTAssertEqual(p.centerText, "0:32")                // elapsed, not remaining
+    }
+
+    func testBoundaryAtExactlyTenSeconds() {
+        XCTAssertEqual(RecordingProgress(elapsed: 30, limit: 40).status, .warning)   // 10s → warn
+        XCTAssertEqual(RecordingProgress(elapsed: 29.9, limit: 40).status, .normal)  // >10s → normal
+    }
+
+    func testOverLimitKeepsGoing() {
+        let p = RecordingProgress(elapsed: 45, limit: 40)   // 5s over
+        XCTAssertEqual(p.status, .over)
+        XCTAssertEqual(p.fraction, 1)                       // ring full, clamped
+        XCTAssertEqual(p.centerText, "0:45")                // still counts up
+        XCTAssertEqual(p.secondaryText, "over limit · will segment")
+    }
+
+    func testMinuteMilestoneFlash() {
+        XCTAssertEqual(RecordingProgress(elapsed: 60.5, limit: 1440).milestoneMinute, 1)
+        XCTAssertEqual(RecordingProgress(elapsed: 60.5, limit: 1440).secondaryText, "1 min")
+        XCTAssertEqual(RecordingProgress(elapsed: 120.1, limit: 1440).secondaryText, "2 min")
+        // Outside the 2.5s flash window after the minute → no reminder.
+        XCTAssertNil(RecordingProgress(elapsed: 75, limit: 1440).milestoneMinute)
+        XCTAssertNil(RecordingProgress(elapsed: 75, limit: 1440).secondaryText)
+    }
+
+    func testNegativeElapsedClampedToZero() {
+        XCTAssertEqual(RecordingProgress(elapsed: -5, limit: 40).elapsed, 0)
+    }
+}
+
 final class WordCountTests: XCTestCase {
     func testWordCount() {
         XCTAssertEqual(DictationController.wordCount(""), 0)
@@ -220,5 +272,17 @@ final class WordCountTests: XCTestCase {
         XCTAssertEqual(DictationController.wordCount("hello"), 1)
         XCTAssertEqual(DictationController.wordCount("  hello   world  "), 2)
         XCTAssertEqual(DictationController.wordCount("one two\nthree\tfour"), 4)
+    }
+
+    func testStatusPartialIsFiltered() {
+        // The engine's warming notice is status, not transcript → filtered out.
+        XCTAssertTrue(DictationController.isStatusPartial(
+            "[ preparing Granite Speech NAR — first pass can take a while ]"))
+        XCTAssertTrue(DictationController.isStatusPartial(
+            "  [ preparing Canary-Qwen — first pass can take a while ]"))
+        // Real transcripts pass through.
+        XCTAssertFalse(DictationController.isStatusPartial("preparing the dinner"))
+        XCTAssertFalse(DictationController.isStatusPartial("Add milk to the list"))
+        XCTAssertFalse(DictationController.isStatusPartial(""))
     }
 }

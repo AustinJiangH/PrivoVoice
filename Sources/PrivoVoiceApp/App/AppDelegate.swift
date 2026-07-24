@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Floating status HUD (top-center), driven by AppState.
-        hud = HUDController(appState: env.appState)
+        hud = HUDController(appState: env.appState, settings: env.settings)
 
         // Global push-to-talk.
         let monitor = HotkeyMonitor(settings: env.settings)
