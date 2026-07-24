@@ -79,6 +79,13 @@ public struct ModelSpec: Identifiable, Sendable, Hashable {
         self.accuracy = accuracy; self.weightsLicense = weightsLicense
         self.werLeaderboard = werLeaderboard; self.summary = summary; self.download = download
     }
+
+    /// Longest audio this model transcribes in ONE pass (16 kHz seconds), sourced
+    /// from the core `ModelBackend`. Beyond it the transcriber segments on silence
+    /// automatically (Voixful `LongForm`), so this is an informational hint — e.g.
+    /// a HUD countdown to the next re-transcribe boundary — NOT a dictation cap.
+    /// `nil` for streaming backends (Nemotron), which have no window.
+    public var singlePassWindowSeconds: Double? { backend.singlePassWindowSeconds }
 }
 
 /// The 25 European locales Parakeet v3 covers (README: "European incl. …").
