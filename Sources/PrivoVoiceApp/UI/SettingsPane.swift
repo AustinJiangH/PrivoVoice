@@ -31,6 +31,12 @@ struct SettingsPane: View {
 
                 Toggle("Copy transcript to clipboard automatically", isOn: $settings.autoCopy)
 
+                Toggle("Show live transcription in the floating HUD", isOn: $settings.showLiveTranscription)
+                Text("When off, the HUD is just the small amplitude meter and recording timer — "
+                     + "your words are still pasted when you release the key.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 LabeledContent("Hotkey") {
                     statusRow(ok: env.appState.hotkeyActive,
                               okText: "Active", badText: "Inactive")

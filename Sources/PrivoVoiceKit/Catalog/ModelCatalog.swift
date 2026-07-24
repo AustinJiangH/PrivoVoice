@@ -61,6 +61,10 @@ public struct ModelSpec: Identifiable, Sendable, Hashable {
     public let weightsLicense: String
     /// Open ASR Leaderboard mean WER for the source checkpoint (lower = better).
     public let werLeaderboard: Double?
+    /// Longest audio (seconds) the model transcribes well in a single pass before
+    /// it must be segmented. `nil` ⇒ effectively unbounded (a native streaming
+    /// model). Drives the HUD's countdown "lens" and the segment reminders.
+    public let maxAudioSeconds: Double?
     /// One-line "what it's best for".
     public let summary: String
     /// Where to auto-download from; `nil` ⇒ install by importing a local asset.
@@ -70,14 +74,16 @@ public struct ModelSpec: Identifiable, Sendable, Hashable {
         id: String, displayName: String, backend: ModelBackend, upstreamRepo: String,
         assetName: String, parameters: String, approxSizeMB: Int, languages: [LanguageTag],
         streaming: Bool, speed: Rating, accuracy: Rating, weightsLicense: String,
-        werLeaderboard: Double?, summary: String, download: DownloadSource?
+        werLeaderboard: Double?, maxAudioSeconds: Double?, summary: String,
+        download: DownloadSource?
     ) {
         self.id = id; self.displayName = displayName; self.backend = backend
         self.upstreamRepo = upstreamRepo; self.assetName = assetName
         self.parameters = parameters; self.approxSizeMB = approxSizeMB
         self.languages = languages; self.streaming = streaming; self.speed = speed
         self.accuracy = accuracy; self.weightsLicense = weightsLicense
-        self.werLeaderboard = werLeaderboard; self.summary = summary; self.download = download
+        self.werLeaderboard = werLeaderboard; self.maxAudioSeconds = maxAudioSeconds
+        self.summary = summary; self.download = download
     }
 
     /// Longest audio this model transcribes in ONE pass (16 kHz seconds), sourced
@@ -110,13 +116,14 @@ public enum ModelCatalog {
             upstreamRepo: "nvidia/nemotron-speech-streaming-en-0.6b",
             assetName: "nemotron-speech-streaming-en-0.6b-palette4.aimodel",
             parameters: "0.6 B",
-            approxSizeMB: 620,
+            approxSizeMB: 330,   // measured Palette4 .aimodel on disk
             languages: [LanguageTag("en")],
             streaming: true,
             speed: .excellent,
             accuracy: .good,
             weightsLicense: "NVIDIA Open Model License",
             werLeaderboard: 5.73,
+            maxAudioSeconds: nil,   // streaming: unbounded (caches across the utterance)
             summary: "Lowest-latency dictation — words appear while you speak.",
             download: .huggingFace(repo: "\(hfOrg)/voixful-nemotron-speech-streaming-en-0.6b", revision: "main")
         ),
@@ -127,13 +134,14 @@ public enum ModelCatalog {
             upstreamRepo: "nvidia/parakeet-tdt-0.6b-v2",
             assetName: "parakeet-tdt-0.6b-v2-palette4.aimodel",
             parameters: "0.6 B",
-            approxSizeMB: 620,
+            approxSizeMB: 335,   // measured Palette4 .aimodel on disk
             languages: [LanguageTag("en")],
             streaming: false,
             speed: .excellent,
             accuracy: .good,
             weightsLicense: "CC-BY-4.0",
             werLeaderboard: 5.39,
+            maxAudioSeconds: 1440,   // 24 min single pass, full attention (HF model card)
             summary: "Smallest footprint, fastest passes, best English accuracy of the small tier.",
             download: .huggingFace(repo: "\(hfOrg)/voixful-parakeet-tdt-0.6b-v2", revision: "main")
         ),
@@ -144,13 +152,14 @@ public enum ModelCatalog {
             upstreamRepo: "nvidia/parakeet-tdt-0.6b-v3",
             assetName: "parakeet-tdt-0.6b-v3-palette4.aimodel",
             parameters: "0.6 B",
-            approxSizeMB: 640,
+            approxSizeMB: 370,   // measured Palette4 .aimodel on disk
             languages: parakeetV3Languages,
             streaming: false,
             speed: .excellent,
             accuracy: .good,
             weightsLicense: "CC-BY-4.0",
             werLeaderboard: 5.66,
+            maxAudioSeconds: 1440,   // 24 min default (HF card); ~3 h possible with local attention
             summary: "25 European languages, fast passes.",
             download: .huggingFace(repo: "\(hfOrg)/voixful-parakeet-tdt-0.6b-v3", revision: "main")
         ),
@@ -161,13 +170,14 @@ public enum ModelCatalog {
             upstreamRepo: "ibm-granite/granite-speech-4.1-2b-nar",
             assetName: "granite-speech-4.1-2b-nar-palette4.aimodel",
             parameters: "2.2 B",
-            approxSizeMB: 2300,
+            approxSizeMB: 1100,   // measured Palette4 .aimodel on disk
             languages: ["en", "fr", "de", "es", "pt"].map(LanguageTag.init),
             streaming: false,
             speed: .good,
             accuracy: .excellent,
             weightsLicense: "Apache-2.0",
             werLeaderboard: 4.95,
+            maxAudioSeconds: 30,   // conservative: no official max; caller should chunk long audio
             summary: "Best accuracy we ship; strong live + file balance. No decode loop.",
             download: .huggingFace(repo: "\(hfOrg)/voixful-granite-speech-4.1-2b-nar", revision: "main")
         ),
@@ -181,13 +191,14 @@ public enum ModelCatalog {
             upstreamRepo: "nvidia/canary-qwen-2.5b",
             assetName: "canary-qwen-2.5b-palette4.aimodel",
             parameters: "2.5 B",
-            approxSizeMB: 2600,
+            approxSizeMB: 2400,   // measured Palette4 .aimodel on disk
             languages: [LanguageTag("en")],
             streaming: false,
             speed: .fair,
             accuracy: .excellent,
             weightsLicense: "CC-BY-4.0",
             werLeaderboard: 5.06,
+            maxAudioSeconds: 40,   // trained max 40 s; segment beyond that (HF model card)
             summary: "Best punctuation + casing. Prefer for files over live dictation.",
             download: .huggingFace(repo: "\(hfOrg)/voixful-canary-qwen-2.5b", revision: "main")
         ),

@@ -56,6 +56,19 @@ final class CatalogTests: XCTestCase {
         }
     }
 
+    func testMaxAudioSecondsMatchesStreaming() {
+        // Streaming models are unbounded (nil); every non-streaming model must
+        // declare a positive single-pass limit so the HUD lens has a target.
+        for spec in ModelCatalog.all {
+            if spec.streaming {
+                XCTAssertNil(spec.maxAudioSeconds, "\(spec.id): streaming ⇒ unbounded (nil)")
+            } else {
+                XCTAssertNotNil(spec.maxAudioSeconds, "\(spec.id): needs a single-pass limit")
+                XCTAssertGreaterThan(spec.maxAudioSeconds ?? 0, 0, "\(spec.id): limit must be positive")
+            }
+        }
+    }
+
     func testAllLanguagesAreSortedAndDeduped() {
         let langs = ModelCatalog.allLanguages
         XCTAssertEqual(Set(langs).count, langs.count)
@@ -119,6 +132,16 @@ final class SettingsTests: XCTestCase {
         XCTAssertNil(s.selectedModelID)
         XCTAssertEqual(s.localeIdentifier, "en-US")
         XCTAssertTrue(s.modelsDirectory.path.contains("Library/PrivoVoice/Models"))
+        XCTAssertTrue(s.showLiveTranscription, "live transcription defaults on")
+    }
+
+    @MainActor
+    func testShowLiveTranscriptionRoundTrips() {
+        let url = tempStore()
+        let a = AppSettings(storeURL: url)
+        a.showLiveTranscription = false
+        a.saveNow()
+        XCTAssertFalse(AppSettings(storeURL: url).showLiveTranscription)
     }
 
     @MainActor

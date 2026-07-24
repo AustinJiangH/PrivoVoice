@@ -92,6 +92,7 @@ public final class DictationController {
         let locale = Locale(identifier: settings.localeIdentifier)
 
         appState.lastError = nil
+        appState.startRecordingClock(limitSeconds: spec.maxAudioSeconds)
         appState.setPhase(.listening)
 
         let session = Session(capture: capture, sampleRate: format.sampleRate)
@@ -103,7 +104,14 @@ public final class DictationController {
             do {
                 try await engine.begin(
                     modelURL: url, backend: spec.backend, locale: locale, format: format,
-                    onPartial: { text in Task { @MainActor in appState.setPartial(text) } })
+                    onPartial: { text in
+                        // Drop the engine's "[ preparing <model> … ]" warming
+                        // notice — it's status, not transcript, and its length
+                        // briefly expanded the live box. Filtered here so the
+                        // engine stays untouched.
+                        guard !Self.isStatusPartial(text) else { return }
+                        Task { @MainActor in appState.setPartial(text) }
+                    })
             } catch {
                 appState.lastError = "Could not start \(spec.displayName): \(error)"
                 return
@@ -189,6 +197,13 @@ public final class DictationController {
     /// Whitespace-delimited word count of a transcript, for the usage total.
     nonisolated static func wordCount(_ text: String) -> Int {
         text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+    }
+
+    /// The live full-context transcriber emits a bracketed "[ preparing <model>
+    /// … ]" warming notice as a partial while its first pass runs. That's status,
+    /// not transcript — keep it out of the live HUD display.
+    nonisolated static func isStatusPartial(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespaces).hasPrefix("[ preparing")
     }
 
     /// Downmix all channels to mono and return the samples plus the peak (0…1).

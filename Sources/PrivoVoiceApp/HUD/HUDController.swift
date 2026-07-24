@@ -10,12 +10,17 @@ import PrivoVoiceKit
 @MainActor
 final class HUDController {
     private let appState: AppState
+    private let settings: AppSettings
     private let panel: NSPanel
 
-    private static let size = NSSize(width: 260, height: 72)
+    // Fixed width; height is a generous transparent canvas — the SwiftUI content
+    // is top-anchored and only as tall as it needs, so the empty area below is
+    // invisible and click-through. Sized to fit the transcript box at full lines.
+    private static let size = NSSize(width: 400, height: 380)
 
-    init(appState: AppState) {
+    init(appState: AppState, settings: AppSettings) {
         self.appState = appState
+        self.settings = settings
 
         panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: Self.size),
@@ -32,7 +37,7 @@ final class HUDController {
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
-        let host = NSHostingView(rootView: HUDView(appState: appState))
+        let host = NSHostingView(rootView: HUDView(appState: appState, settings: settings))
         host.frame = NSRect(origin: .zero, size: Self.size)
         panel.contentView = host
 
