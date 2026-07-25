@@ -29,7 +29,7 @@ struct ModelCard: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(.background.secondary))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2)
+                .strokeBorder(isSelected ? AppTheme.accent : .clear, lineWidth: 2)
         )
     }
 
@@ -43,7 +43,7 @@ struct ModelCard: View {
                 Label("In use", systemImage: "checkmark.circle.fill")
                     .labelStyle(.titleAndIcon)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(AppTheme.accent)
             }
             Spacer()
             Text(spec.parameters)
@@ -58,21 +58,21 @@ struct ModelCard: View {
         // Wrapping row of capability badges.
         FlowLayout(spacing: 6) {
             if spec.streaming {
-                CapabilityBadge(icon: "dot.radiowaves.left.and.right", text: "Streaming", tint: .green)
+                CapabilityBadge(icon: "dot.radiowaves.left.and.right", text: "Streaming", tint: AppTheme.positive)
             } else {
                 CapabilityBadge(icon: "arrow.triangle.2.circlepath", text: "Re-transcribe", tint: .secondary)
             }
-            RatingBadge(label: "Speed", rating: spec.speed, tint: .green)
-            RatingBadge(label: "Accuracy", rating: spec.accuracy, tint: .blue)
+            RatingBadge(label: "Speed", rating: spec.speed, tint: AppTheme.positive)
+            RatingBadge(label: "Accuracy", rating: spec.accuracy, tint: AppTheme.progress)
             CapabilityBadge(
                 icon: "globe",
                 text: spec.languages.count == 1 ? spec.languages[0].displayName : "\(spec.languages.count) languages",
-                tint: .teal)
+                tint: AppTheme.info)
             CapabilityBadge(icon: "internaldrive", text: sizeText, tint: .secondary)
             if let wer = spec.werLeaderboard {
-                CapabilityBadge(icon: "chart.bar", text: "WER \(String(format: "%.2f", wer))", tint: .purple)
+                CapabilityBadge(icon: "chart.bar", text: "WER \(String(format: "%.2f", wer))", tint: AppTheme.progress)
             }
-            CapabilityBadge(icon: "doc.text", text: spec.weightsLicense, tint: .orange)
+            CapabilityBadge(icon: "doc.text", text: spec.weightsLicense, tint: AppTheme.warning)
         }
     }
 
@@ -153,7 +153,7 @@ struct ModelCard: View {
             case let .failed(message):
                 VStack(alignment: .leading, spacing: 2) {
                     Label("Failed", systemImage: "exclamationmark.triangle")
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(.caption).foregroundStyle(AppTheme.danger)
                     Text(message).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                 }
                 Spacer()

@@ -37,7 +37,8 @@ final class HUDController {
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
-        let host = NSHostingView(rootView: HUDView(appState: appState, settings: settings))
+        let host = NSHostingView(rootView: HUDView(appState: appState, settings: settings)
+            .tint(AppTheme.accent))
         host.frame = NSRect(origin: .zero, size: Self.size)
         panel.contentView = host
 

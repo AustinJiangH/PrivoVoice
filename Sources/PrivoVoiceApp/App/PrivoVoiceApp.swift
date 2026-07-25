@@ -15,6 +15,7 @@ struct PrivoVoiceApp: App {
         Window("PrivoVoice", id: WindowID.main) {
             RootView()
                 .environment(env)
+                .tint(AppTheme.accent)   // wood accent inherited by all controls
                 .frame(minWidth: 720, minHeight: 480)
         }
         .windowResizability(.contentMinSize)
@@ -23,6 +24,7 @@ struct PrivoVoiceApp: App {
         MenuBarExtra {
             MenuBarContent()
                 .environment(env)
+                .tint(AppTheme.accent)
         } label: {
             Image(systemName: env.appState.phase.menuBarSymbol)
         }

@@ -21,13 +21,13 @@ struct DashboardPane: View {
 
                 // The hard numbers.
                 HStack(spacing: 14) {
-                    StatCard(icon: "clock.fill", tint: .blue,
+                    StatCard(icon: "clock.fill", tint: AppTheme.meterIn,
                              value: Self.durationText(stats.totalSeconds),
                              label: "Transcribed")
-                    StatCard(icon: "text.word.spacing", tint: .green,
+                    StatCard(icon: "text.word.spacing", tint: AppTheme.meterOut,
                              value: Self.countText(stats.totalWords),
                              label: stats.totalWords == 1 ? "Word" : "Words")
-                    StatCard(icon: "waveform", tint: .purple,
+                    StatCard(icon: "waveform", tint: AppTheme.meterHot,
                              value: Self.countText(stats.totalSessions),
                              label: stats.totalSessions == 1 ? "Dictation" : "Dictations")
                 }
@@ -87,7 +87,7 @@ struct DashboardPane: View {
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(LinearGradient(
-                    colors: [Color.accentColor.opacity(0.16), Color.accentColor.opacity(0.04)],
+                    colors: [AppTheme.accent.opacity(0.16), AppTheme.accent.opacity(0.04)],
                     startPoint: .topLeading, endPoint: .bottomTrailing)))
     }
 
