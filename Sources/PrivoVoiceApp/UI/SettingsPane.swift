@@ -31,6 +31,12 @@ struct SettingsPane: View {
 
                 Toggle("Copy transcript to clipboard automatically", isOn: $settings.autoCopy)
 
+                Toggle("Add a space before each dictation", isOn: $settings.autoSpacing)
+                Text("Prepends a single space to each transcript so back-to-back "
+                     + "dictations don't run together (some models omit boundary spaces).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Toggle("Show live transcription in the floating HUD", isOn: $settings.showLiveTranscription)
                 Text("When off, the HUD is just the small amplitude meter and recording timer — "
                      + "your words are still pasted when you release the key.")

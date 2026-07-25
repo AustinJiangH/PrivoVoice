@@ -75,8 +75,8 @@ final class UsageEquivalentsTests: XCTestCase {
     }
 
     func testPicksLargestSurpassedDurationAnchor() {
-        // 4 hours has passed the movie Titanic (3h14m) but not LOTR (11h+).
-        let e = UsageEquivalents.forDuration(seconds: 4 * 3600)
+        // 3h20m has passed the movie Titanic (3h14m) but not Gone with the Wind (3h58m).
+        let e = UsageEquivalents.forDuration(seconds: 3 * 3600 + 20 * 60)
         XCTAssertEqual(e?.name, "the movie Titanic")
         XCTAssertGreaterThan(e?.multiple ?? 0, 1)
     }

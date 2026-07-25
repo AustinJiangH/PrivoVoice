@@ -72,6 +72,15 @@ struct RootView: View {
         .background(TintedMaterial(tint: AppTheme.backgroundTint).ignoresSafeArea())
         .background(WindowConfigurator())
         .onAppear { env.store.refresh() }   // rescan the models folder on open
+        // First-run onboarding, full-bleed over the main UI until completed/skipped.
+        .overlay {
+            if !env.settings.hasCompletedOnboarding {
+                OnboardingView {
+                    withAnimation(.smooth) { env.settings.hasCompletedOnboarding = true }
+                }
+                .transition(.opacity)
+            }
+        }
     }
 }
 

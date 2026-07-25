@@ -92,7 +92,12 @@ private struct TranscriptBox: View {
     @Bindable var appState: AppState
 
     private var isEmpty: Bool { appState.partialText.isEmpty }
-    private var displayText: String { isEmpty ? placeholder : appState.partialText }
+    // Show only the most recent 50 words: the tail is sliced verbatim (original
+    // spacing/newlines) and prefixed with "…" once earlier words drop off, so the
+    // newest words hold a steady position instead of scrolling the whole caption.
+    private var displayText: String {
+        isEmpty ? placeholder : TranscriptWindow.lastWords(appState.partialText, maxWords: 50)
+    }
 
     var body: some View {
         // A SINGLE Text (not an if/else that swaps views): swapping views made
@@ -225,6 +230,15 @@ private struct TranscribingIndicator: View {
             + "can see the transcript box grow to fit however many lines the words currently "
             + "need, instead of sitting at a fixed height the whole time.",
         elapsed: 47, limitSeconds: 1440))
+}
+
+#Preview("Long transcript (windowed to 50 words)") {
+    // A >50-word partial: the box shows only the most recent 50 words, led by a
+    // "…" for the dropped front, so the newest words sit in a stable position.
+    hudPreview(.preview(
+        phase: .listening,
+        partialText: (1...80).map { "word\($0)" }.joined(separator: " "),
+        elapsed: 92, limitSeconds: 1440))
 }
 
 #Preview("Near limit (red)") {
