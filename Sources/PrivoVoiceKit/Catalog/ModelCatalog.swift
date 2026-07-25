@@ -202,6 +202,81 @@ public enum ModelCatalog {
             summary: "Best punctuation + casing. Prefer for files over live dictation.",
             download: .huggingFace(repo: "\(hfOrg)/voixful-canary-qwen-2.5b", revision: "main")
         ),
+        // Whisper — the four middle-to-best checkpoints by WER. English-only here:
+        // the engine's WhisperEngine.supportedLocales is en-US, and non-English is
+        // unbenchmarked. All ship a hard 30 s single-pass window (segment beyond it).
+        ModelSpec(
+            id: "whisper-small",
+            displayName: "Whisper Small",
+            backend: .whisper,
+            upstreamRepo: "openai/whisper-small",
+            assetName: "whisper-small-palette4.aimodel",
+            parameters: "0.24 B",
+            approxSizeMB: 634,
+            languages: [LanguageTag("en")],
+            streaming: false,
+            speed: .good,
+            accuracy: .fair,
+            weightsLicense: "MIT",
+            werLeaderboard: 9.8,
+            maxAudioSeconds: 30,   // Whisper's hard 30 s single-pass window
+            summary: "Compact Whisper; solid English accuracy at a modest footprint.",
+            download: .huggingFace(repo: "\(hfOrg)/voixful-whisper-small", revision: "main")
+        ),
+        ModelSpec(
+            id: "whisper-medium",
+            displayName: "Whisper Medium",
+            backend: .whisper,
+            upstreamRepo: "openai/whisper-medium",
+            assetName: "whisper-medium-palette4.aimodel",
+            parameters: "0.77 B",
+            approxSizeMB: 1897,
+            languages: [LanguageTag("en")],
+            streaming: false,
+            speed: .good,
+            accuracy: .fair,
+            weightsLicense: "MIT",
+            werLeaderboard: 8.6,
+            maxAudioSeconds: 30,   // Whisper's hard 30 s single-pass window
+            summary: "Larger Whisper; better English accuracy than Small.",
+            download: .huggingFace(repo: "\(hfOrg)/voixful-whisper-medium", revision: "main")
+        ),
+        ModelSpec(
+            id: "whisper-large-v3-turbo",
+            displayName: "Whisper Large v3 Turbo",
+            backend: .whisper,
+            upstreamRepo: "openai/whisper-large-v3-turbo",
+            assetName: "whisper-large-v3-turbo-palette4.aimodel",
+            parameters: "0.81 B",
+            approxSizeMB: 970,
+            languages: [LanguageTag("en")],
+            streaming: false,
+            speed: .good,
+            accuracy: .fair,
+            weightsLicense: "MIT",
+            werLeaderboard: 7.83,
+            maxAudioSeconds: 30,   // Whisper's hard 30 s single-pass window
+            summary: "Near-large accuracy with a lighter, faster decoder.",
+            download: .huggingFace(repo: "\(hfOrg)/voixful-whisper-large-v3-turbo", revision: "main")
+        ),
+        ModelSpec(
+            id: "whisper-large-v3",
+            displayName: "Whisper Large v3",
+            backend: .whisper,
+            upstreamRepo: "openai/whisper-large-v3",
+            assetName: "whisper-large-v3-palette4.aimodel",
+            parameters: "1.55 B",
+            approxSizeMB: 3773,
+            languages: [LanguageTag("en")],
+            streaming: false,
+            speed: .fair,
+            accuracy: .fair,
+            weightsLicense: "MIT",
+            werLeaderboard: 7.44,
+            maxAudioSeconds: 30,   // Whisper's hard 30 s single-pass window
+            summary: "Best Whisper English accuracy; heaviest of the four.",
+            download: .huggingFace(repo: "\(hfOrg)/voixful-whisper-large-v3", revision: "main")
+        ),
     ]
 
     /// Look up a spec by its stable id.
