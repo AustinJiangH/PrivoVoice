@@ -98,11 +98,12 @@ struct SettingsPane: View {
                 if let err = env.appState.lastError {
                     Label(err, systemImage: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppTheme.warning)
                 }
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)   // let the panel tint show through
         .navigationTitle("Settings")
     }
 
@@ -115,7 +116,7 @@ struct SettingsPane: View {
     private func statusRow(ok: Bool, okText: String, badText: String) -> some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(ok ? Color.green : Color.orange)
+                .fill(ok ? AppTheme.positive : AppTheme.warning)
                 .frame(width: 8, height: 8)
             Text(ok ? okText : badText)
         }

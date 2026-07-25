@@ -27,7 +27,7 @@ struct CapabilityBadge: View {
 struct RatingBadge: View {
     let label: String
     let rating: Rating
-    var tint: Color = .blue
+    var tint: Color = AppTheme.info
 
     var body: some View {
         HStack(spacing: 5) {

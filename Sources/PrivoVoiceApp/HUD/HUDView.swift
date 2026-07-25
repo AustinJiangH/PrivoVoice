@@ -38,27 +38,6 @@ struct HUDView: View {
     }
 }
 
-// MARK: - Status → color
-
-/// Map the pure `RecordingProgress.Status` (from PrivoVoiceKit) to the HUD tint.
-private extension RecordingProgress {
-    var tint: Color {
-        switch status {
-        case .over: return .orange
-        case .warning: return .red
-        case .normal, .streaming: return .green
-        }
-    }
-    /// Color for the transient secondary label, matching its meaning.
-    var secondaryColor: Color {
-        switch status {
-        case .over: return .orange
-        case .warning: return .red
-        case .normal, .streaming: return .yellow   // a minute-mark reminder
-        }
-    }
-}
-
 // MARK: - Status capsule
 
 private struct StatusCapsule: View {
@@ -73,7 +52,7 @@ private struct StatusCapsule: View {
                                              now: context.date)
             HStack(spacing: 7) {
                 if appState.phase == .transcribing {
-                    TranscribingIndicator(tint: .orange)
+                    TranscribingIndicator(tint: AppTheme.progress)
                     Text("Transcribing…")
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
@@ -155,11 +134,14 @@ private struct Shimmer: View {
                 let t = context.date.timeIntervalSinceReferenceDate
                 let phase = (t.truncatingRemainder(dividingBy: 2.4)) / 2.4   // 0…1 loop
                 GeometryReader { geo in
-                    LinearGradient(colors: [.clear, .white.opacity(0.12), .clear],
+                    LinearGradient(colors: [.clear, .white.opacity(0.10), .clear],
                                    startPoint: .leading, endPoint: .trailing)
                         .frame(width: geo.size.width * 0.4)
                         .offset(x: (CGFloat(phase) * 1.8 - 0.4) * geo.size.width)
-                        .blendMode(.plusLighter)
+                    // No .blendMode here: a non-normal blend promotes this box to
+                    // an offscreen compositing group, which rasterizes the
+                    // transcript text and makes it look unsmoothed. Plain alpha
+                    // blending keeps the glyphs crisply live-rendered.
                 }
                 .allowsHitTesting(false)
             }
