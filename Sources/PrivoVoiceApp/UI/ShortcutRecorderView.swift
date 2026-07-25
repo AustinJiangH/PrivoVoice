@@ -23,8 +23,12 @@ struct ShortcutRecorderView: View {
                 HStack {
                     Image(systemName: recording ? "record.circle" : "keyboard")
                         .foregroundStyle(recording ? AppTheme.danger : .secondary)
-                    Text(recording ? "Press keys…  (Esc to cancel)" : combo.displayString)
-                        .monospaced()
+                    if recording {
+                        Text("Press keys…  (Esc to cancel)")
+                            .monospaced()
+                    } else {
+                        KeyComboBadges(combo: combo)
+                    }
                     Spacer()
                 }
                 .frame(minWidth: 200)

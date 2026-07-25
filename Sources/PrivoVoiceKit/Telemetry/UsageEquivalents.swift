@@ -45,12 +45,16 @@ public enum UsageEquivalents {
     /// as a fraction, before you've cleared even that).
     static let durationAnchors: [(name: String, emoji: String, seconds: Double)] = [
         ("a voicemail",                    "📞", 30),
-        ("the Happy Birthday song",        "🎂", 60),
-        ("a pop song",                     "🎵", 3.5 * 60),
-        ("a sitcom episode",               "📺", 22 * 60),
-        ("a TED talk marathon",            "🎤", 60 * 60),
-        ("the movie Titanic",              "🚢", 3 * 3600 + 14 * 60),   // 3h14m
-        ("the Lord of the Rings trilogy",  "💍", 11 * 3600 + 22 * 60),  // extended
+        ("the Gettysburg Address",         "🎩", 2 * 60),                // ~2 min; Lincoln's 272-word address, per history.com/articles/gettysburg-address
+        ("the song Bohemian Rhapsody",     "🎸", 5 * 60 + 55),          // 5:55; per en.wikipedia.org/wiki/Bohemian_Rhapsody
+        ("the song American Pie",          "🥧", 8 * 60 + 37),          // 8:37 (album version); per en.wikipedia.org/wiki/American_Pie_(song)
+        ("MLK's \"I Have a Dream\" speech","🎙️", 17 * 60),              // ~17 min, delivered Aug 28 1963; per usembassy / naacp.org accounts
+        ("a sitcom episode",               "📺", 22 * 60),              // ~22 min sans ads (e.g. Friends); per en.wikipedia.org/wiki/List_of_Friends_episodes
+        ("The Godfather",                  "🎬", 175 * 60),             // 2h55m (175 min); per en.wikipedia.org/wiki/The_Godfather
+        ("Avengers: Endgame",              "🦸", 181 * 60),             // ~3h01m (181 min); per indiewire.com Endgame runtime report
+        ("the movie Titanic",              "🚢", 3 * 3600 + 14 * 60),   // 3h14m (194 min)
+        ("Gone with the Wind",             "🌪️", 3 * 3600 + 58 * 60),  // 3h58m (238 min, incl. overture & intermission); per en.wikipedia.org/wiki/Gone_with_the_Wind_(film)
+        ("the Lord of the Rings trilogy",  "💍", 11 * 3600 + 22 * 60),  // extended editions, 11h22m (682 min); per looper.com LOTR runtimes
         ("a full audiobook",               "🎧", 16 * 3600),
         ("a work week",                    "💼", 40 * 3600),
         ("a full month of workdays",       "📆", 160 * 3600),
@@ -60,17 +64,22 @@ public enum UsageEquivalents {
     // MARK: Word-count anchors, smallest → largest.
 
     static let wordAnchors: [(name: String, emoji: String, words: Double)] = [
-        ("a tweet",                        "🐦", 50),
+        ("a text message",                 "💬", 7),          // avg SMS ≈ 7 words; per crushhapp.com "average text message length"
+        ("a tweet",                        "🐦", 50),         // 280 chars ≈ ~50 words
         ("a postcard",                     "✉️", 100),
+        ("a typical news article",         "📰", 800),        // online news piece ≈ 600–900 words; using 800 as the midpoint
         ("a blog post",                    "📝", 1_000),
+        ("the Declaration of Independence","📜", 1_320),      // 1,320 words; per declaration.fas.harvard.edu (Harvard Declaration Resources Project)
+        ("the U.S. Constitution",          "📃", 4_543),      // 4,543 words, original unamended incl. signatures; per usconstitution.net / National Constitution Center
+        ("a long magazine feature",        "🗞️", 6_000),     // long-form feature ≈ 5,000–10,000 words; using 6,000
         ("a short story",                  "📖", 7_500),
         ("a novella",                      "📗", 30_000),
-        ("The Great Gatsby",               "🥂", 47_000),
-        ("Harry Potter and the Sorcerer's Stone", "⚡️", 77_000),
+        ("The Great Gatsby",               "🥂", 47_094),     // 47,094 words; per wordcounttool.com famous-novels list
+        ("Harry Potter and the Sorcerer's Stone", "⚡️", 76_944),   // 76,944 words; per hogwartsprofessor.com "Harry Potter by the Numbers"
         ("a full-length novel",            "📚", 90_000),
-        ("The Lord of the Rings",          "🗺️", 481_000),
-        ("War and Peace",                  "⚔️", 587_000),
-        ("the entire Harry Potter series", "🧙", 1_084_000),
+        ("The Lord of the Rings",          "🗺️", 481_103),    // 481,103 words; per sacnoths.blogspot.com / wordcounters
+        ("War and Peace",                  "⚔️", 587_287),    // 587,287 words; per wordcounter.net
+        ("the entire Harry Potter series", "🧙", 1_084_170),  // 1,084,170 words; per hogwartsprofessor.com
     ]
 
     // MARK: Pickers

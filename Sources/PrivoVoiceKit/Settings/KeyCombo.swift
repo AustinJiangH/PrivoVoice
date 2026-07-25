@@ -29,6 +29,19 @@ public struct KeyModifiers: OptionSet, Sendable, Hashable, Codable {
         if contains(.command) { s += "⌘" }
         return s
     }
+
+    /// Ordered glyph tokens `["fn","⌃","⌥","⇧","⌘"]` as present — one token per
+    /// modifier, in the same canonical order as `displayString`. `fn` is spelled
+    /// out; the rest are their symbol glyphs.
+    public var components: [String] {
+        var out: [String] = []
+        if contains(.function) { out.append("fn") }
+        if contains(.control) { out.append("⌃") }
+        if contains(.option) { out.append("⌥") }
+        if contains(.shift) { out.append("⇧") }
+        if contains(.command) { out.append("⌘") }
+        return out
+    }
 }
 
 /// A key chord: an optional virtual key code plus modifiers.
@@ -81,6 +94,17 @@ public struct KeyCombo: Sendable, Hashable, Codable {
     public var displayString: String {
         if isEmpty { return "Not set" }
         return modifiers.displayString + (keyLabel ?? "")
+    }
+
+    /// Ordered badge tokens: the modifier glyphs (canonical order) followed by the
+    /// key label. An empty chord yields `[]`. A modifier-only chord (e.g. `fn`)
+    /// yields just its modifier tokens. If a key code has no captured label, its
+    /// token is omitted (the modifiers still render).
+    public var badgeComponents: [String] {
+        if isEmpty { return [] }
+        var out = modifiers.components
+        if let keyLabel, !keyLabel.isEmpty { out.append(keyLabel) }
+        return out
     }
 
     /// The default: hold the `fn` (Globe) key to talk — a modifier-only chord, so

@@ -7,6 +7,9 @@ import PrivoVoiceKit
 
 struct ModelCard: View {
     let spec: ModelSpec
+    /// Optional rank within a use-case section (1 = recommended). `nil` hides the
+    /// rank badge — the default, so existing usages and previews are unaffected.
+    var rank: Int? = nil
     @Environment(AppEnvironment.self) private var env
 
     @State private var confirmingDelete = false
@@ -39,6 +42,9 @@ struct ModelCard: View {
         HStack(alignment: .firstTextBaseline) {
             Text(spec.displayName)
                 .font(.headline)
+            if let rank {
+                RankBadge(rank: rank)
+            }
             if isSelected {
                 Label("In use", systemImage: "checkmark.circle.fill")
                     .labelStyle(.titleAndIcon)

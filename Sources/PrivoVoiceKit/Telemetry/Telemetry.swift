@@ -15,6 +15,8 @@ import Observation
 public final class Telemetry {
     /// Local, always-updated totals for the Dashboard.
     public let stats: UsageStats
+    /// Local, always-updated per-dictation history that powers the usage charts.
+    public let log: DictationLog
 
     private let settings: AppSettings
     private let reporter: any TelemetryReporting
@@ -22,10 +24,12 @@ public final class Telemetry {
     public init(
         settings: AppSettings,
         stats: UsageStats = UsageStats(),
+        log: DictationLog = DictationLog(),
         reporter: any TelemetryReporting = TelemetryReporter()
     ) {
         self.settings = settings
         self.stats = stats
+        self.log = log
         self.reporter = reporter
     }
 
@@ -34,6 +38,8 @@ public final class Telemetry {
     /// best-effort — this method cannot fail in a way the caller can observe.
     public func record(seconds: Double, words: Int, modelID: String?) {
         stats.record(seconds: seconds, words: words)
+        // Local per-dictation history for the charts — always on, like `stats`.
+        log.record(seconds: seconds, words: words, modelID: modelID, date: Date())
 
         guard settings.telemetryEnabled else { return }
         let event = TelemetryEvent(

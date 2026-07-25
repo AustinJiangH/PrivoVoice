@@ -178,8 +178,11 @@ final class DictationControllerTests: XCTestCase {
         controller.start()
         controller.stop()
         await waitUntil { appState.phase == .idle }
-        XCTAssertEqual(delivered, "Hello, world.")
-        XCTAssertEqual(appState.lastTranscript, "Hello, world.")
+        // autoSpacing defaults ON: the trimmed transcript is delivered with a
+        // single leading separator space so back-to-back dictations don't run
+        // together. (Trimming still collapses the engine's surrounding padding.)
+        XCTAssertEqual(delivered, " Hello, world.")
+        XCTAssertEqual(appState.lastTranscript, " Hello, world.")
     }
 
     @MainActor

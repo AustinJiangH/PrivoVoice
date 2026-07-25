@@ -161,8 +161,12 @@ public final class DictationController {
             finalizing = false    // now a new press may begin
             // Preserve the previous transcript on a no-speech / failed tap.
             if !final.isEmpty {
-                appState.commitTranscript(final)
-                onFinalTranscript?(final)
+                // Optionally prepend a separating space so consecutive dictations
+                // don't run together. The RAW `final` still drives telemetry — the
+                // separator isn't a word and must not change stats.
+                let delivered = settings.autoSpacing ? Self.separated(final) : final
+                appState.commitTranscript(delivered)
+                onFinalTranscript?(delivered)
                 // Best-effort usage recording — never gates the transcript.
                 let seconds = session.sampleRate > 0
                     ? Double(session.framesFed) / session.sampleRate : 0
@@ -197,6 +201,15 @@ public final class DictationController {
     /// Whitespace-delimited word count of a transcript, for the usage total.
     nonisolated static func wordCount(_ text: String) -> Int {
         text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+    }
+
+    /// Prepend a single separating space unless the text already starts with
+    /// whitespace or is empty — so back-to-back dictations don't run together.
+    /// Idempotent: `separated("")` == "" and text that already leads with
+    /// whitespace is returned unchanged.
+    nonisolated static func separated(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        return first.isWhitespace ? text : " " + text
     }
 
     /// The live full-context transcriber emits a bracketed "[ preparing <model>

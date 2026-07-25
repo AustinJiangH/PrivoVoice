@@ -22,6 +22,12 @@ public final class AppSettings {
     public var autoCopy: Bool {
         didSet { scheduleSave() }
     }
+    /// Insert a single leading space before each delivered transcript so
+    /// back-to-back dictations don't run together (some models omit boundary
+    /// whitespace). Default on.
+    public var autoSpacing: Bool {
+        didSet { scheduleSave() }
+    }
     /// Push-to-talk hotkey.
     public var hotkey: KeyCombo {
         didSet { scheduleSave() }
@@ -43,6 +49,11 @@ public final class AppSettings {
     /// Show the growing live transcript in the floating HUD while dictating. When
     /// off, the HUD is just the small amplitude + timer pill. Default on.
     public var showLiveTranscription: Bool {
+        didSet { scheduleSave() }
+    }
+    /// Whether the first-run onboarding flow has been completed (or skipped). Once
+    /// true the flow never shows again. Default false so a fresh install onboards.
+    public var hasCompletedOnboarding: Bool {
         didSet { scheduleSave() }
     }
 
@@ -72,20 +83,24 @@ public final class AppSettings {
             self.modelsDirectory = persisted.modelsDirectory ?? Self.defaultModelsDirectory
             self.selectedModelID = persisted.selectedModelID
             self.autoCopy = persisted.autoCopy ?? true
+            self.autoSpacing = persisted.autoSpacing ?? true
             self.hotkey = persisted.hotkey ?? .defaultCombo
             self.localeIdentifier = persisted.localeIdentifier ?? "en-US"
             self.huggingFaceToken = persisted.huggingFaceToken
             self.telemetryEnabled = persisted.telemetryEnabled ?? false
             self.showLiveTranscription = persisted.showLiveTranscription ?? true
+            self.hasCompletedOnboarding = persisted.hasCompletedOnboarding ?? false
         } else {
             self.modelsDirectory = Self.defaultModelsDirectory
             self.selectedModelID = nil
             self.autoCopy = true
+            self.autoSpacing = true
             self.hotkey = .defaultCombo
             self.localeIdentifier = "en-US"
             self.huggingFaceToken = nil
             self.telemetryEnabled = false
             self.showLiveTranscription = true
+            self.hasCompletedOnboarding = false
         }
 
         // Guard against an unsafe shortcut (e.g. a bare key from an older build)
@@ -112,11 +127,13 @@ public final class AppSettings {
             modelsDirectory: modelsDirectory,
             selectedModelID: selectedModelID,
             autoCopy: autoCopy,
+            autoSpacing: autoSpacing,
             hotkey: hotkey,
             localeIdentifier: localeIdentifier,
             huggingFaceToken: huggingFaceToken,
             telemetryEnabled: telemetryEnabled,
-            showLiveTranscription: showLiveTranscription
+            showLiveTranscription: showLiveTranscription,
+            hasCompletedOnboarding: hasCompletedOnboarding
         )
         try? snapshot.save(to: storeURL)
     }
@@ -129,11 +146,13 @@ public final class AppSettings {
         var modelsDirectory: URL?
         var selectedModelID: String?
         var autoCopy: Bool?
+        var autoSpacing: Bool?
         var hotkey: KeyCombo?
         var localeIdentifier: String?
         var huggingFaceToken: String?
         var telemetryEnabled: Bool?
         var showLiveTranscription: Bool?
+        var hasCompletedOnboarding: Bool?
 
         static func load(from url: URL) throws -> Persisted {
             let data = try Data(contentsOf: url)
