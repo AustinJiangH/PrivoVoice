@@ -48,6 +48,7 @@ let package = Package(
                 .product(name: "VoixfulCohereTranscribe", package: "Voixful"),
                 .product(name: "VoixfulGraniteNAR", package: "Voixful"),
                 .product(name: "VoixfulCanaryQwen", package: "Voixful"),
+                .product(name: "VoixfulWhisper", package: "Voixful"),
                 .product(name: "VoixfulFullContext", package: "Voixful"),
             ]
         ),

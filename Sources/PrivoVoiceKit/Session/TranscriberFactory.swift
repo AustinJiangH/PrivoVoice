@@ -11,6 +11,7 @@ import VoixfulParakeetTDT
 import VoixfulCohereTranscribe
 import VoixfulGraniteNAR
 import VoixfulCanaryQwen
+import VoixfulWhisper
 import VoixfulFullContext
 
 public enum TranscriberFactory {
@@ -51,6 +52,9 @@ public enum TranscriberFactory {
                 modelURL: modelURL, piecesURL: pieces, locale: locale)
         case .canary:
             return LiveFullContextTranscriber<CanaryQwenEngine>(
+                modelURL: modelURL, piecesURL: pieces, locale: locale)
+        case .whisper:
+            return LiveFullContextTranscriber<WhisperEngine>(
                 modelURL: modelURL, piecesURL: pieces, locale: locale)
         }
     }
