@@ -4,6 +4,7 @@
 // stdout. If it crashes or hangs, the UI process survives and respawns it.
 
 import Foundation
+import MLX
 import PrivoVoiceKit
 import PrivoVoiceIPC
 import VoixfulEngine
@@ -97,6 +98,34 @@ struct EngineHelper {
                 } catch {
                     out.send(.error("\(error)"))
                 }
+
+            case let .warmFormatter(modelPath, removesFillers, formatsLists, appliesCorrections):
+                // Best-effort formatter warm-up (model load + kernel/prompt
+                // cache priming, anchored for the caller's real options). Runs
+                // OFF the serial request loop so a `.begin` arriving mid-load
+                // isn't wedged behind ~2 s of model loading; the formatter
+                // itself serializes against concurrent `.format`s. `.warmed` is
+                // informational — the app fires-and-forgets, probes can await it.
+                Task {
+                    await engine.warmFormatter(
+                        modelPath: modelPath,
+                        options: FormatterOptions(
+                            removesFillers: removesFillers,
+                            formatsLists: formatsLists,
+                            appliesCorrections: appliesCorrections))
+                    out.send(.warmed)
+                }
+
+            case .unloadFormatter:
+                // Fire-and-forget counterpart of `.warmFormatter`: drop the
+                // resident formatter model (~1 GB). No response by design; the
+                // stderr line makes "did the memory really go?" checkable from
+                // the parent's console (stderr is inherited for debugging).
+                await engine.unloadFormatter()
+                let s = GPU.snapshot()
+                let note = "[helper] formatter unloaded — MLX active \(s.activeMemory >> 20) MB, "
+                    + "cache \(s.cacheMemory >> 20) MB\n"
+                FileHandle.standardError.write(Data(note.utf8))
 
             case .quit:
                 exit(0)

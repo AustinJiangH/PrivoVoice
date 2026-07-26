@@ -48,6 +48,21 @@ public protocol DictationEngine: Sendable {
     /// `TranscriptFormatter`). Runs wherever the engine runs, so in the
     /// two-process app the LLM stays inside the sidecar.
     func format(text: String, modelPath: String, options: FormatterOptions) async throws -> String
+
+    /// Best-effort: proactively load the formatter model at `modelPath` (and
+    /// warm its kernels/prompt cache, anchored for `options` so the user's
+    /// actual toggles don't re-anchor on the first real format) so the first
+    /// `format` after app launch doesn't pay the ~2 s cold model load. Never
+    /// throws — a failed warm-up just means the first format is cold, as
+    /// before. Callers should treat it as fire-and-forget (wrap in a `Task`),
+    /// and only send it at quiet moments (startup, setting/install changes) —
+    /// never per-dictation.
+    func warmFormatter(modelPath: String, options: FormatterOptions) async
+
+    /// Drop the resident formatter model (the ~1 GB counterpart of
+    /// `warmFormatter`) — sent when formatting turns off or the model is
+    /// removed. Best-effort and a no-op when nothing is resident.
+    func unloadFormatter() async
 }
 
 public extension DictationEngine {
@@ -56,4 +71,10 @@ public extension DictationEngine {
     func format(text: String, modelPath: String, options: FormatterOptions) async throws -> String {
         text
     }
+
+    /// Warm-up is optional; engines that don't format ignore it.
+    func warmFormatter(modelPath: String, options: FormatterOptions) async {}
+
+    /// Unload is optional; engines that don't format have nothing resident.
+    func unloadFormatter() async {}
 }

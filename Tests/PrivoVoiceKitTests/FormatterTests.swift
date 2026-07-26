@@ -98,6 +98,17 @@ final class FormatterSanityGuardTests: XCTestCase {
             "\"Buy milk.\"")
     }
 
+    func testUnwrappedKeepsQuotesWhenInputContainsAnyQuote() {
+        // Quoted spans hidden behind edge fillers: the output's leading and
+        // trailing quotes belong to two DIFFERENT spans — stripping the pair
+        // would unbalance it. Any quote in the input disables the strip.
+        XCTAssertEqual(
+            TranscriptFormatter.unwrapped(
+                "\"Yes,\" she said, \"no.\"",
+                input: "um \"yes\" she said \"no\" um"),
+            "\"Yes,\" she said, \"no.\"")
+    }
+
     func testUnwrappedLeavesPlainTextAlone() {
         XCTAssertEqual(
             TranscriptFormatter.unwrapped("Just a sentence.", input: "just a sentence"),
@@ -183,6 +194,71 @@ final class FormatterListifyTests: XCTestCase {
         XCTAssertEqual(
             TranscriptFormatter.listified("Firstly clean the desk. Secondly file the mail."),
             "1. Clean the desk.\n2. File the mail.")
+    }
+
+    // MARK: parse-clean-or-bail — every corruption becomes a benign miss
+
+    func testOrdinalStreetNamesStayProse() {
+        // "First"/"Second" as parts of proper names: the capitalized bodies
+        // fail the clean-parse rule, so the whole input is untouched.
+        let s = "First Street is closed. Second Avenue is jammed."
+        XCTAssertEqual(TranscriptFormatter.listified(s), s)
+    }
+
+    func testFirstOfAllIdiomStaysProse() {
+        // "First of all" is an idiom, not a marker — and with no armed first
+        // item, the lone "Second, …" sentence can't start a list either.
+        // (A real enumeration opened with a multi-word marker bails to prose
+        // instead of getting half-stripped — an acceptable miss.)
+        let s = "First of all, thanks everyone. Second, let's review the budget."
+        XCTAssertEqual(TranscriptFormatter.listified(s), s)
+    }
+
+    func testSecondThoughtsIdiomStaysProse() {
+        let s = "First we lock the date. Second thoughts keep creeping in."
+        XCTAssertEqual(TranscriptFormatter.listified(s), s)
+    }
+
+    func testAbbreviationSplitItemBailsTheWholeRun() {
+        // The naive sentence splitter cuts "Dr. Brown" in half; the item body
+        // ending "Dr." reveals the bad split, and the WHOLE run bails —
+        // item 1 must not be listified while item 2 is mangled.
+        let s = "First, call the vendor. Second, ask Dr. Brown about the venue."
+        XCTAssertEqual(TranscriptFormatter.listified(s), s)
+    }
+
+    func testCapitalizedLaterItemBailsTheWholeRun() {
+        // Items 1–2 parse cleanly but item 3 is a proper name — partial
+        // stripping is the corruption, so everything stays prose.
+        let s = "First we pack. Second we drive. Third Street is where we park."
+        XCTAssertEqual(TranscriptFormatter.listified(s), s)
+    }
+
+    func testMultilineModelOutputIsNeverFlattened() {
+        // The model already chose a layout (dash bullets here) — the prose
+        // pass must not run at all on multi-line text.
+        let s = "Here's the plan.\n- tag the build\n- push it to staging"
+        XCTAssertEqual(TranscriptFormatter.listified(s), s)
+    }
+
+    func testSingleLineLeadingListMarkupIsUntouched() {
+        XCTAssertEqual(TranscriptFormatter.listified("1. Only item"), "1. Only item")
+    }
+
+    func testVersionNumberProseDoesNotSuppressRealEnumeration() {
+        // The old guard was `contains("1. ")`, which "version 1. " tripped —
+        // the anchored check lets the genuine enumeration format.
+        XCTAssertEqual(
+            TranscriptFormatter.listified(
+                "We shipped version 1. First we tag the build. Second we push it."),
+            "We shipped version 1.\n1. We tag the build.\n2. We push it.")
+    }
+
+    func testSentenceInitialPronounIParsesCleanly() {
+        // "I" is the one legitimate capital after a marker.
+        XCTAssertEqual(
+            TranscriptFormatter.listified("First I need coffee. Second I'm booking the room."),
+            "1. I need coffee.\n2. I'm booking the room.")
     }
 }
 
@@ -358,6 +434,27 @@ final class FormatterStoreTests: XCTestCase {
         return root
     }
 
+    /// Write a directory that passes `looksInstalled` (config + weights +
+    /// tokenizer) and return it.
+    @discardableResult
+    private func makeInstalled(at root: URL) throws -> URL {
+        let dir = root.appending(path: FormatterCatalog.installSlug, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: dir.appending(path: "config.json"))
+        try Data("w".utf8).write(to: dir.appending(path: "model.safetensors"))
+        try Data("{}".utf8).write(to: dir.appending(path: "tokenizer.json"))
+        return dir
+    }
+
+    /// Poll until `path` no longer exists (off-main-actor deletes).
+    @MainActor
+    private func waitGone(_ path: String, timeout: TimeInterval = 5) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while FileManager.default.fileExists(atPath: path), Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
     @MainActor
     func testFreshStoreIsNotInstalled() throws {
         let store = FormatterStore(rootDirectory: try makeRoot())
@@ -368,10 +465,7 @@ final class FormatterStoreTests: XCTestCase {
     @MainActor
     func testDetectsInstalledSnapshotOnInit() throws {
         let root = try makeRoot()
-        let dir = root.appending(path: FormatterCatalog.installSlug, directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Data("{}".utf8).write(to: dir.appending(path: "config.json"))
-        try Data("w".utf8).write(to: dir.appending(path: "model.safetensors"))
+        try makeInstalled(at: root)
 
         let store = FormatterStore(rootDirectory: root)
         XCTAssertEqual(store.phase, .installed)
@@ -390,23 +484,116 @@ final class FormatterStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testRemoveResetsPhaseAndDeletes() async throws {
+    func testMissingTokenizerIsNotInstalled() throws {
+        // A cancelled Hub snapshot returns a PARTIAL directory that can hold
+        // config + weights but no tokenizer — it must not count as installed.
         let root = try makeRoot()
         let dir = root.appending(path: FormatterCatalog.installSlug, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: dir.appending(path: "config.json"))
         try Data("w".utf8).write(to: dir.appending(path: "model.safetensors"))
 
+        XCTAssertFalse(FormatterStore.looksInstalled(at: dir))
+        XCTAssertEqual(FormatterStore(rootDirectory: root).phase, .notInstalled)
+    }
+
+    @MainActor
+    func testRemoveResetsPhaseAndDeletes() async throws {
+        let root = try makeRoot()
+        let dir = try makeInstalled(at: root)
+        // A crash-orphaned staging dir must be swept by remove() too.
+        let orphan = FormatterStore.stagingDirectory(root: root, generation: 3)
+        try FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: true)
+
         let store = FormatterStore(rootDirectory: root)
         XCTAssertTrue(store.isInstalled)
         store.remove()
         XCTAssertEqual(store.phase, .notInstalled)
-        // The delete itself runs off the main actor — poll briefly.
-        let deadline = Date().addingTimeInterval(5)
-        while FileManager.default.fileExists(atPath: dir.path), Date() < deadline {
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
+        // The deletes themselves run off the main actor — poll briefly.
+        await waitGone(dir.path)
+        await waitGone(orphan.path)
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+    }
+
+    // MARK: download generations (state machine only — no network)
+
+    @MainActor
+    func testStaleDownloadCallbacksAreIgnored() throws {
+        let store = FormatterStore(rootDirectory: try makeRoot())
+        let gen1 = store.beginDownload()
+        XCTAssertEqual(store.phase, .downloading(0))
+        let gen2 = store.beginDownload()   // superseding attempt
+
+        // Late hops from the superseded attempt: all no-ops.
+        store.downloadDidProgress(0.5, generation: gen1)
+        XCTAssertEqual(store.phase, .downloading(0))
+        store.downloadDidSucceed(generation: gen1)
+        XCTAssertEqual(store.phase, .downloading(0))
+        store.downloadDidFail("boom", generation: gen1)
+        XCTAssertEqual(store.phase, .downloading(0))
+
+        // The current attempt still drives the phase.
+        store.downloadDidProgress(0.25, generation: gen2)
+        XCTAssertEqual(store.phase, .downloading(0.25))
+        store.downloadDidSucceed(generation: gen2)
+        XCTAssertEqual(store.phase, .installed)
+    }
+
+    @MainActor
+    func testRemoveStalifiesInFlightDownloadCallbacks() throws {
+        let store = FormatterStore(rootDirectory: try makeRoot())
+        let gen = store.beginDownload()
+        store.remove()
+        XCTAssertEqual(store.phase, .notInstalled)
+        // The cancelled attempt's late hops must not resurrect any state —
+        // in particular success must not flip a removed store to .installed.
+        store.downloadDidSucceed(generation: gen)
+        XCTAssertEqual(store.phase, .notInstalled)
+        store.downloadDidFail("cancelled", generation: gen)
+        XCTAssertEqual(store.phase, .notInstalled)
+        store.downloadDidProgress(0.9, generation: gen)
+        XCTAssertEqual(store.phase, .notInstalled)
+    }
+
+    @MainActor
+    func testFailureOnlyLandsWhileStillDownloading() throws {
+        let store = FormatterStore(rootDirectory: try makeRoot())
+        let gen = store.beginDownload()
+        store.downloadDidFail("network down", generation: gen)
+        XCTAssertEqual(store.phase, .failed("network down"))
+        // A duplicate late failure hop for the same (now finished) attempt.
+        store.downloadDidFail("late duplicate", generation: gen)
+        XCTAssertEqual(store.phase, .failed("network down"))
+    }
+
+    func testStagingDirectoriesArePerGeneration() {
+        let root = URL(fileURLWithPath: "/tmp/x", isDirectory: true)
+        let a = FormatterStore.stagingDirectory(root: root, generation: 1)
+        let b = FormatterStore.stagingDirectory(root: root, generation: 2)
+        XCTAssertNotEqual(a.path, b.path)
+        XCTAssertTrue(a.lastPathComponent.hasPrefix(FormatterCatalog.installSlug + ".partial"))
+    }
+
+    @MainActor
+    func testInitSweepsOrphanedStagingButKeepsInstall() async throws {
+        let root = try makeRoot()
+        let dir = try makeInstalled(at: root)
+        // Crash orphans: the old un-numbered layout and a numbered generation.
+        let legacy = root.appending(path: FormatterCatalog.installSlug + ".partial",
+                                    directoryHint: .isDirectory)
+        let numbered = FormatterStore.stagingDirectory(root: root, generation: 7)
+        try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: numbered, withIntermediateDirectories: true)
+
+        let store = FormatterStore(rootDirectory: root)
+        XCTAssertTrue(store.isInstalled)
+        await waitGone(legacy.path)
+        await waitGone(numbered.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacy.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: numbered.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.path),
+                      "the install itself must survive the sweep")
     }
 }
 
@@ -417,11 +604,16 @@ actor FormatMockEngine: DictationEngine {
     enum FormatBehavior {
         case succeed(String)
         case fail
-        case hang            // never returns (until task cancellation)
+        case hang            // hangs until the task is cancelled (like the real engines)
     }
     var finalText = "raw transcript"
     var behavior: FormatBehavior = .succeed("Polished transcript.")
     private(set) var formatCalls = 0
+    private(set) var cancelCalls = 0
+    /// Set when a hanging format observed its task's cancellation — the real
+    /// engines' cancellation-responsiveness, mirrored so the controller tests
+    /// can assert the polish timeout genuinely cancels the format child.
+    private(set) var formatCancelled = false
 
     func setBehavior(_ b: FormatBehavior) { behavior = b }
     func setFinal(_ t: String) { finalText = t }
@@ -430,9 +622,19 @@ actor FormatMockEngine: DictationEngine {
                format: AudioStreamFormat, onPartial: @escaping @Sendable (String) -> Void) async throws {}
     func feed(_ samples: [Float]) {}
     func end() async throws -> String { finalText }
-    func cancel() {}
+    func cancel() { cancelCalls += 1 }
 
     private(set) var lastOptions: FormatterOptions?
+    private(set) var warmCalls: [String] = []
+    private(set) var warmOptions: [FormatterOptions] = []
+    private(set) var unloadCalls = 0
+
+    func warmFormatter(modelPath: String, options: FormatterOptions) async {
+        warmCalls.append(modelPath)
+        warmOptions.append(options)
+    }
+
+    func unloadFormatter() { unloadCalls += 1 }
 
     func format(text: String, modelPath: String, options: FormatterOptions) async throws -> String {
         formatCalls += 1
@@ -441,7 +643,12 @@ actor FormatMockEngine: DictationEngine {
         case .succeed(let t): return t
         case .fail: throw Boom()
         case .hang:
-            try await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+            do {
+                try await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+            } catch {
+                formatCancelled = true
+                throw error
+            }
             return text
         }
     }
@@ -542,8 +749,18 @@ final class FormatterControllerTests: XCTestCase {
         settings.formatFinalTranscript = true
         controller.formatterModelPath = { "/tmp/formatter-model" }
         controller.formatTimeoutSeconds = 0.2
+        let started = Date()
         let delivered = await runSession(controller, appState)
         XCTAssertEqual(delivered, " raw transcript")
+        // The raw text must arrive at ~the timeout, not after the 60 s hang:
+        // the group's implicit drain only returns promptly because cancelAll()
+        // genuinely cancels the format child.
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+        await waitUntil { await engine.formatCancelled }
+        // `finalizing` cleared — a new press may begin immediately.
+        controller.start()
+        XCTAssertTrue(controller.isRunning)
+        controller.cancel()
     }
 
     @MainActor
@@ -576,5 +793,218 @@ final class FormatterControllerTests: XCTestCase {
     func testPolishingPhaseLabel() {
         XCTAssertEqual(DictationPhase.polishing.label, "Polishing…")
         XCTAssertTrue(DictationPhase.polishing.isActive)
+    }
+
+    // MARK: warmFormatterIfNeeded triggers
+
+    @MainActor
+    func testWarmFormatterSendsWarmWhenEnabledAndInstalled() async throws {
+        let engine = FormatMockEngine()
+        let (controller, _, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmCalls == ["/tmp/formatter-model"] }
+    }
+
+    @MainActor
+    func testWarmFormatterIsDebouncedPerPath() async throws {
+        let engine = FormatMockEngine()
+        let (controller, _, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        controller.warmFormatterIfNeeded()   // same path → no second send
+        await waitUntil { await engine.warmCalls.count == 1 }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let calls = await engine.warmCalls
+        XCTAssertEqual(calls, ["/tmp/formatter-model"])
+    }
+
+    @MainActor
+    func testWarmFormatterSkippedWhenSettingOff() async throws {
+        let engine = FormatMockEngine()
+        let (controller, _, _) = try makeController(engine: engine)
+        // Default settings: formatFinalTranscript == false.
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let calls = await engine.warmCalls
+        XCTAssertEqual(calls, [])
+    }
+
+    @MainActor
+    func testWarmFormatterSkippedWhenNotInstalled() async throws {
+        let engine = FormatMockEngine()
+        let (controller, _, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { nil }   // "not installed"
+        controller.warmFormatterIfNeeded()
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let calls = await engine.warmCalls
+        XCTAssertEqual(calls, [])
+    }
+
+    @MainActor
+    func testWarmFormatterFiresAgainAfterInstallAppears() async throws {
+        // Setting on but model missing → no warm; once the path resolves
+        // (download completed), the next trigger warms.
+        let engine = FormatMockEngine()
+        let (controller, _, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        let installed = SendableBox<String?>(nil)
+        controller.formatterModelPath = { installed.value }
+        controller.warmFormatterIfNeeded()
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        installed.value = "/tmp/formatter-model"
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmCalls == ["/tmp/formatter-model"] }
+    }
+
+    @MainActor
+    func testWarmFormatterCarriesUserOptions() async throws {
+        // The warm-up must anchor the prefix cache for the user's REAL
+        // toggles — warming defaults would re-anchor on the first format.
+        let engine = FormatMockEngine()
+        let (controller, _, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        settings.formatterRemovesFillers = false
+        settings.formatterAppliesCorrections = false
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmOptions.count == 1 }
+        let options = await engine.warmOptions.first
+        XCTAssertEqual(options, FormatterOptions(
+            removesFillers: false, formatsLists: true, appliesCorrections: false))
+    }
+
+    @MainActor
+    func testWarmFormatterReWarmsWhenOptionsChange() async throws {
+        // Same path but different toggles is NOT debounced — the anchor must
+        // follow the options.
+        let engine = FormatMockEngine()
+        let (controller, _, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmCalls.count == 1 }
+        settings.formatterFormatsLists = false
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmCalls.count == 2 }
+        let options = await engine.warmOptions.last
+        XCTAssertEqual(options?.formatsLists, false)
+    }
+
+    // MARK: cancel() during the finalize/polish window
+
+    @MainActor
+    func testCancelDuringPolishingDropsDeliveryAndAllowsRestart() async throws {
+        let engine = FormatMockEngine()
+        await engine.setBehavior(.hang)
+        let (controller, appState, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.formatTimeoutSeconds = 0.3
+        var delivered: String?
+        controller.onFinalTranscript = { delivered = $0 }
+        controller.start()
+        controller.stop()
+        await waitUntil { appState.phase == .polishing }
+
+        controller.cancel()
+        XCTAssertEqual(appState.phase, .idle)
+        await waitUntil { await engine.cancelCalls >= 1 }
+        // Wait out the polish timeout: the stale stop-task must NOT deliver,
+        // commit, or count telemetry for the cancelled utterance.
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertNil(delivered)
+        XCTAssertEqual(appState.lastTranscript, "")
+
+        // And a new session may begin immediately (finalizing was cleared).
+        controller.start()
+        XCTAssertTrue(controller.isRunning)
+        controller.cancel()
+    }
+
+    // MARK: unloadFormatterIfIdle
+
+    @MainActor
+    func testUnloadAfterWarmSendsUnloadOnceAndReArmsWarm() async throws {
+        let engine = FormatMockEngine()
+        let (controller, _, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmCalls.count == 1 }
+
+        controller.unloadFormatterIfIdle()
+        await waitUntil { await engine.unloadCalls == 1 }
+        // Debounced: nothing can be resident anymore → a re-fired trigger
+        // (e.g. install-phase churn) sends nothing.
+        controller.unloadFormatterIfIdle()
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let unloads = await engine.unloadCalls
+        XCTAssertEqual(unloads, 1)
+
+        // The warm debounce was cleared — re-enabling re-warms.
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmCalls.count == 2 }
+    }
+
+    @MainActor
+    func testUnloadSkippedWhileSessionActive() async throws {
+        let engine = FormatMockEngine()
+        let (controller, _, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmCalls.count == 1 }
+
+        controller.start()
+        XCTAssertTrue(controller.isRunning)
+        controller.unloadFormatterIfIdle()   // mid-session: must not unload
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let unloads = await engine.unloadCalls
+        XCTAssertEqual(unloads, 0)
+        controller.cancel()
+    }
+
+    @MainActor
+    func testUnloadWithoutAnythingResidentIsANoOp() async throws {
+        let engine = FormatMockEngine()
+        let (controller, _, _) = try makeController(engine: engine)
+        controller.unloadFormatterIfIdle()   // never warmed, never formatted
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let unloads = await engine.unloadCalls
+        XCTAssertEqual(unloads, 0)
+    }
+}
+
+/// Tiny lock-free-enough box for test closures (main-actor confined use).
+private final class SendableBox<T>: @unchecked Sendable {
+    var value: T
+    init(_ value: T) { self.value = value }
+}
+
+// MARK: - Prefix-cache anchor arithmetic (pure)
+
+final class FormatterPrefixReuseTests: XCTestCase {
+    func testSharedPrefixOfSentinelRenders() {
+        // Two renders differing only in the user turn share the preamble.
+        XCTAssertEqual(
+            TranscriptFormatter.sharedPrefixLength([1, 2, 3, 40, 9], [1, 2, 3, 41, 9]), 3)
+    }
+
+    func testDisjointSequencesShareNothing() {
+        XCTAssertEqual(TranscriptFormatter.sharedPrefixLength([7, 8], [1, 2, 3]), 0)
+    }
+
+    func testIdenticalSequencesShareEverything() {
+        XCTAssertEqual(TranscriptFormatter.sharedPrefixLength([1, 2, 3], [1, 2, 3]), 3)
+    }
+
+    func testEmptySequenceIsSafe() {
+        XCTAssertEqual(TranscriptFormatter.sharedPrefixLength([], [1, 2]), 0)
+        XCTAssertEqual(TranscriptFormatter.sharedPrefixLength([1], []), 0)
     }
 }

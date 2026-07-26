@@ -27,6 +27,8 @@ public enum FormatterCatalog {
     /// Rough on-disk size (weights ~968 MB + tokenizer ~11 MB), for UI copy.
     public static let approxSizeDescription = "~1 GB"
     /// Hub glob patterns covering everything the runtime needs: weights +
-    /// index, config, tokenizer files, and any chat template.
+    /// index, config, tokenizer files, and any chat template. Must stay a
+    /// superset of what `FormatterStore.looksInstalled` requires (config.json,
+    /// tokenizer.json, a *.safetensors shard).
     public static let filePatterns = ["*.safetensors", "*.json", "*.jinja"]
 }

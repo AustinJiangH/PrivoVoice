@@ -11,6 +11,7 @@
 
 import XCTest
 import Foundation
+import MLX
 @testable import PrivoVoiceKit
 
 final class FormatterSmokeTests: XCTestCase {
@@ -100,6 +101,35 @@ final class FormatterSmokeTests: XCTestCase {
         try await run(formatter, input: inputs[0],
                       options: FormatterOptions(formatsLists: false),
                       tag: "SMOKE[mod] lists-OFF")
+    }
+
+    /// `unloadFormatter` must actually hand the ~1 GB of weights back — both
+    /// the live arrays (container drop) and MLX's buffer reuse cache
+    /// (`GPU.clearCache()`).
+    func testUnloadFreesFormatterMemory() async throws {
+        guard ProcessInfo.processInfo.environment["PRIVOVOICE_FORMATTER_SMOKE"] == "1" else {
+            throw XCTSkip("Set PRIVOVOICE_FORMATTER_SMOKE=1 to run the real-model smoke test.")
+        }
+        let (installed, directory) = await MainActor.run {
+            (FormatterStore.shared.isInstalled, FormatterStore.shared.installDirectory)
+        }
+        guard installed else {
+            throw XCTSkip("Formatter model not installed at \(directory.path).")
+        }
+
+        let engine = InProcessDictationEngine()
+        await engine.warmFormatter(modelPath: directory.path, options: FormatterOptions())
+        let before = GPU.snapshot()
+        XCTAssertGreaterThan(before.activeMemory, 500 << 20,
+                             "the model should be resident after a warm-up")
+        await engine.unloadFormatter()
+        let after = GPU.snapshot()
+        print("SMOKE[unload] MLX active \(before.activeMemory >> 20) MB -> "
+              + "\(after.activeMemory >> 20) MB, cache \(after.cacheMemory >> 20) MB")
+        XCTAssertLessThan(after.activeMemory, 200 << 20,
+                          "unload must release the model weights")
+        XCTAssertLessThan(after.cacheMemory, 200 << 20,
+                          "unload must clear MLX's buffer cache")
     }
 
     private func run(

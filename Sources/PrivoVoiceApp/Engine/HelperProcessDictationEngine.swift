@@ -23,6 +23,20 @@ public actor HelperProcessDictationEngine: DictationEngine {
     private var beginTimeout: Task<Void, Never>?
     private var endTimeout: Task<Void, Never>?
     private var formatTimeout: Task<Void, Never>?
+    /// Which spawned sidecar the reader/termination callbacks belong to.
+    /// Incremented on every spawn AND on `killProcess()`: a killed process's
+    /// reader keeps draining until EOF, and without the epoch its late frames /
+    /// termination would clobber a freshly respawned sidecar's state (failing
+    /// the new pending begin with `.crashed`, nilling the new stdin).
+    private var processGeneration = 0
+    /// True from sending a `.format` until the sidecar answers (`.formatted` /
+    /// `.error`) or dies. Outlives a cooperatively-cancelled continuation so
+    /// the wedge-guard below can still tell "late but alive" from "hung".
+    private var formatInFlight = false
+    /// Which `format()` call a cooperative-cancel hop belongs to — the hop is
+    /// concurrent, so without this a stale cancel could fail a LATER format's
+    /// continuation.
+    private var formatEpoch = 0
 
     /// A begin that hasn't acknowledged (`.ready`/`.error`) in this long is
     /// treated as a hung sidecar. `.begin` only builds the transcriber (the model
@@ -30,9 +44,11 @@ public actor HelperProcessDictationEngine: DictationEngine {
     private let beginTimeoutSeconds: UInt64 = 20
     /// A finalize that doesn't return in this long is treated as a hang.
     private let endTimeoutSeconds: UInt64 = 60
-    /// A transcript format that doesn't return in this long is treated as a
-    /// hang. Longer than the caller's own fallback window (60 s) so the session
-    /// falls back to the raw transcript before the sidecar gets recycled.
+    /// A transcript format that doesn't answer in this long means the sidecar's
+    /// serial loop is wedged behind a hung generate — kill it so the next
+    /// request respawns a clean one. Purely a wedge-guard: the SESSION's
+    /// fallback is its own (shorter, 60 s) timeout, which cancels `format`
+    /// cooperatively without killing a sidecar that's merely slow.
     private let formatTimeoutSeconds: UInt64 = 75
 
     public init(helperURL: URL) {
@@ -88,30 +104,78 @@ public actor HelperProcessDictationEngine: DictationEngine {
 
     /// Format the final transcript in the sidecar (the formatter LLM stays
     /// resident there). Any failure is thrown; the session layer falls back to
-    /// the raw transcript.
+    /// the raw transcript. Cancellation-responsive: cancelling the calling
+    /// task (the session's polish timeout) fails the wait promptly with
+    /// `CancellationError` — the sidecar itself is left alone (a late
+    /// `.formatted` is dropped by `handle(_:)`; a genuinely hung generate is
+    /// the wedge-guard timeout's job).
     public func format(
         text: String, modelPath: String, options: FormatterOptions
     ) async throws -> String {
         try ensureRunning()
-        return try await withCheckedThrowingContinuation { continuation in
-            pendingFormat = continuation
-            send(.format(text: text, modelPath: modelPath,
-                         removesFillers: options.removesFillers,
-                         formatsLists: options.formatsLists,
-                         appliesCorrections: options.appliesCorrections))
-            let seconds = formatTimeoutSeconds
-            formatTimeout = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
-                await self?.formatTimedOut()
+        try Task.checkCancellation()
+        formatEpoch += 1
+        let epoch = formatEpoch
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pendingFormat = continuation
+                formatInFlight = true
+                send(.format(text: text, modelPath: modelPath,
+                             removesFillers: options.removesFillers,
+                             formatsLists: options.formatsLists,
+                             appliesCorrections: options.appliesCorrections))
+                let seconds = formatTimeoutSeconds
+                formatTimeout = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+                    await self?.formatTimedOut()
+                }
             }
+        } onCancel: {
+            // Runs concurrently with the actor — hop onto it; the actor method
+            // no-ops if the format already resumed (response/timeout/kill).
+            Task { await self.cancelPendingFormat(epoch: epoch) }
         }
     }
 
-    /// A pending format didn't respond in time — fail it and kill the sidecar
-    /// (the serial request loop is wedged behind the hung generate). A late
-    /// `.formatted` after this is dropped by `handle(_:)`.
+    /// Fire-and-forget: spawn the sidecar if needed and ask it to pre-load the
+    /// formatter model, anchored for the caller's real options. No
+    /// continuation — the sidecar's `.warmed` ack is ignored here (see
+    /// `handle(_:)`); if the spawn or load fails, the first real format simply
+    /// pays the cold cost as before.
+    public func warmFormatter(modelPath: String, options: FormatterOptions) async {
+        try? ensureRunning()
+        send(.warmFormatter(modelPath: modelPath,
+                            removesFillers: options.removesFillers,
+                            formatsLists: options.formatsLists,
+                            appliesCorrections: options.appliesCorrections))
+    }
+
+    /// Fire-and-forget: drop the sidecar's resident formatter model (~1 GB).
+    /// Never spawns a sidecar just to unload — no process means nothing is
+    /// resident.
+    public func unloadFormatter() async {
+        guard process != nil else { return }
+        send(.unloadFormatter)
+    }
+
+    /// The caller's task was cancelled (the session already fell back to the
+    /// raw transcript): fail the waiting continuation, but do NOT kill the
+    /// sidecar and do NOT cancel the wedge-guard — the sidecar may be merely
+    /// slow (its late `.formatted` gets dropped), and if it is genuinely hung
+    /// the guard still recycles it at `formatTimeoutSeconds`.
+    private func cancelPendingFormat(epoch: Int) {
+        guard epoch == formatEpoch, let continuation = pendingFormat else { return }
+        pendingFormat = nil
+        continuation.resume(throwing: CancellationError())
+    }
+
+    /// No `.formatted`/`.error` for the in-flight format within the window —
+    /// the serial request loop is wedged behind a hung generate. Fail any
+    /// still-pending wait and kill the sidecar so the next request respawns a
+    /// clean one. A late `.formatted` after this is dropped by `handle(_:)`.
     private func formatTimedOut() {
-        guard pendingFormat != nil else { return }
+        guard formatInFlight else { return }
+        formatInFlight = false
         resumeFormat(.failure(HelperError.timeout))
         killProcess()
     }
@@ -140,6 +204,8 @@ public actor HelperProcessDictationEngine: DictationEngine {
         // stderr inherits the parent's for debug visibility.
         try proc.run()
 
+        processGeneration += 1
+        let generation = processGeneration
         self.process = proc
         self.stdin = inPipe.fileHandleForWriting
 
@@ -152,13 +218,17 @@ public actor HelperProcessDictationEngine: DictationEngine {
             onEOF: { continuation.finish() })
         reader.start()
 
+        // The epoch pins every frame (and the EOF) to the process it came
+        // from: a killed process's reader drains to EOF in the background, and
+        // its stale frames/termination must not touch a respawned sidecar.
         consumeTask = Task { [weak self] in
-            for await response in responses { await self?.handle(response) }
-            await self?.handleTermination()
+            for await response in responses { await self?.handle(response, generation: generation) }
+            await self?.handleTermination(generation: generation)
         }
     }
 
-    private func handle(_ response: EngineResponse) {
+    private func handle(_ response: EngineResponse, generation: Int) {
+        guard generation == processGeneration else { return }   // stale reader
         switch response {
         case .pong:
             break
@@ -169,9 +239,13 @@ public actor HelperProcessDictationEngine: DictationEngine {
         case let .final(text):
             resumeEnd(.success(text))
         case let .formatted(text):
+            formatInFlight = false
             // No pending format (timeout/cancel already resumed it) ⇒ a late
-            // response from a recycled request — drop it.
+            // response from a recycled request — drop it (resumeFormat still
+            // cancels the wedge-guard: the sidecar answered, it isn't hung).
             resumeFormat(.success(text))
+        case .warmed:
+            break   // warm-ups are fire-and-forget; the ack is informational
         case let .error(message):
             // A begin-time failure (bad model) routes to the pending begin; a
             // finalize failure to the pending end; a format failure to the
@@ -182,6 +256,7 @@ public actor HelperProcessDictationEngine: DictationEngine {
             } else if pendingEnd != nil {
                 resumeEnd(.failure(HelperError.engine(message)))
             } else {
+                formatInFlight = false
                 resumeFormat(.failure(HelperError.engine(message)))
             }
         }
@@ -189,7 +264,9 @@ public actor HelperProcessDictationEngine: DictationEngine {
 
     /// The sidecar exited (crash or clean). Fail any in-flight begin/end and clear
     /// state so the next `begin()` respawns it.
-    private func handleTermination() {
+    private func handleTermination(generation: Int) {
+        guard generation == processGeneration else { return }   // stale reader
+        formatInFlight = false
         resumeBegin(.failure(HelperError.crashed))
         resumeEnd(.failure(HelperError.crashed))
         resumeFormat(.failure(HelperError.crashed))
@@ -200,6 +277,11 @@ public actor HelperProcessDictationEngine: DictationEngine {
     }
 
     private func killProcess() {
+        // Invalidate the dying process's reader immediately — it stays alive
+        // until EOF, and its late frames/termination must not clobber the
+        // sidecar the next request spawns.
+        processGeneration += 1
+        formatInFlight = false
         process?.terminate()
         process = nil
         stdin = nil

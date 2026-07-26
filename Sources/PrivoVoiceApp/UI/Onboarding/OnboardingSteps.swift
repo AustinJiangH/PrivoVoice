@@ -473,10 +473,15 @@ struct FormattingStep: View {
             }
 
         case .notInstalled:
-            // Opted in, download not reported yet — a beat before progress arrives.
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Starting download…").font(.caption).foregroundStyle(.secondary)
+            // Opted in but no download running — e.g. the app quit mid-download
+            // and relaunched into onboarding. Offer to pick it back up
+            // (`download()` is idempotent, so a stray tap is harmless).
+            VStack(alignment: .leading, spacing: 6) {
+                Label("The download didn't finish.", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.warning)
+                Button("Resume download", action: onEnable)
+                    .buttonStyle(.bordered)
             }
         }
     }

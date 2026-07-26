@@ -139,9 +139,12 @@ struct SettingsPane: View {
                     // Turning it on without the model installed asks before
                     // downloading; Cancel reverts the toggle. Once confirmed
                     // the toggle stays on and the core falls back to raw
-                    // transcripts until the model is ready.
-                    if enabled && !FormatterStore.shared.isInstalled {
-                        confirmFormatterDownload = true
+                    // transcripts until the model is ready. No prompt while a
+                    // download is already in flight (or the model is installed).
+                    guard enabled else { return }
+                    switch FormatterStore.shared.phase {
+                    case .notInstalled, .failed: confirmFormatterDownload = true
+                    case .downloading, .installed: break
                     }
                 }
             Text("Runs each finished dictation through a small on-device language "
@@ -171,6 +174,22 @@ struct SettingsPane: View {
             }
             .padding(.leading, 20)
             .disabled(!settings.formatFinalTranscript)
+
+            // Honesty check: the toggle is on but there's no model to format
+            // with and no download running — say so; the row below has the
+            // Download/Retry action.
+            if settings.formatFinalTranscript {
+                switch FormatterStore.shared.phase {
+                case .notInstalled, .failed:
+                    Label("Formatting is on but the model isn't installed — "
+                          + "transcripts are delivered unformatted.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.warning)
+                case .downloading, .installed:
+                    EmptyView()
+                }
+            }
 
             formatterModelRow
         }

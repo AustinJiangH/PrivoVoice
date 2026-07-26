@@ -45,6 +45,34 @@ final class AppEnvironment {
         // First-run landing: Models when nothing is installed yet, else the
         // Dashboard. Set once here so an explicit menu-bar jump isn't clobbered.
         route.selection = store.installedIDs.isEmpty ? .models : .dashboard
+
+        // Keep the sidecar's resident formatter in sync with the settings +
+        // install state: pre-warm when transcript formatting is on and the
+        // model is installed (startup, setting turning on, download
+        // completing) so the first formatted dictation doesn't pay the ~2 s
+        // cold model load; unload (~1 GB freed) when either side goes away.
+        syncFormatterResidency()
+    }
+
+    /// Fire exactly one residency trigger for the current state — warm when
+    /// formatting is on AND the model is installed, unload otherwise — then
+    /// re-arm on every change of the formatting setting or the formatter
+    /// install phase (Observation fires once per change, so each pass
+    /// re-registers). Both sides are debounced/guarded in the controller, so
+    /// re-fires for unrelated phase changes (e.g. download progress) are
+    /// harmless.
+    private func syncFormatterResidency() {
+        if settings.formatFinalTranscript && FormatterStore.shared.isInstalled {
+            dictation.warmFormatterIfNeeded()
+        } else {
+            dictation.unloadFormatterIfIdle()
+        }
+        withObservationTracking {
+            _ = settings.formatFinalTranscript
+            _ = FormatterStore.shared.phase
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.syncFormatterResidency() }
+        }
     }
 
     /// Locate the `PrivoVoiceHelper` sidecar: an env override (dev), else a

@@ -24,6 +24,13 @@ final class IPCFramingTests: XCTestCase {
                     removesFillers: false, formatsLists: true, appliesCorrections: false),
             .format(text: "", modelPath: "",
                     removesFillers: false, formatsLists: false, appliesCorrections: false),
+            .warmFormatter(modelPath: "/formatters/cleanup",
+                           removesFillers: true, formatsLists: true, appliesCorrections: true),
+            .warmFormatter(modelPath: "/formatters/cleanup",
+                           removesFillers: false, formatsLists: true, appliesCorrections: false),
+            .warmFormatter(modelPath: "",
+                           removesFillers: false, formatsLists: false, appliesCorrections: false),
+            .unloadFormatter,
         ]
         let decoded = roundTrip(requests.map { $0.encoded() }).map { EngineRequest.decode($0) }
         XCTAssertEqual(decoded, requests.map { Optional($0) })
@@ -34,6 +41,7 @@ final class IPCFramingTests: XCTestCase {
             .pong, .ready, .partial("hello wor"), .partial(""), .final("Hello, world."),
             .error("could not load model"),
             .formatted("First: eggs. Then: milk."), .formatted(""),
+            .warmed,
         ]
         let decoded = roundTrip(responses.map { $0.encoded() }).map { EngineResponse.decode($0) }
         XCTAssertEqual(decoded, responses.map { Optional($0) })
@@ -80,6 +88,65 @@ final class SidecarProcessTests: XCTestCase {
         let exited = waitForExit(proc, timeout: 10)
         XCTAssertTrue(exited, "sidecar did not exit on .quit")
         if exited { XCTAssertEqual(proc.terminationStatus, 0) }
+        if proc.isRunning { proc.terminate() }
+    }
+
+    /// A `.warmFormatter` with a bogus path must ack `.warmed` (best-effort:
+    /// the failed load is swallowed) without wedging the request loop — the
+    /// interleaved ping still answers.
+    func testWarmFormatterAcksAndDoesNotWedgeLoop() throws {
+        let helper = try locateHelper()
+        let proc = Process()
+        proc.executableURL = helper
+        let stdin = Pipe()
+        let stdout = Pipe()
+        proc.standardInput = stdin
+        proc.standardOutput = stdout
+        try proc.run()
+
+        try? stdin.fileHandleForWriting.write(
+            contentsOf: EngineRequest.warmFormatter(
+                modelPath: "/nonexistent/model",
+                removesFillers: true, formatsLists: true, appliesCorrections: true).encoded())
+        try? stdin.fileHandleForWriting.write(contentsOf: EngineRequest.ping.encoded())
+
+        // Warm-up runs off the serial loop, so pong/warmed order is unspecified.
+        var got: [EngineResponse] = []
+        for _ in 0..<2 {
+            guard let response = readOneFrame(from: stdout.fileHandleForReading, timeout: 30)
+                .flatMap(EngineResponse.decode) else { break }
+            got.append(response)
+        }
+        XCTAssertEqual(got.count, 2, "expected pong + warmed, got \(got)")
+        XCTAssertTrue(got.contains(.pong), "missing pong in \(got)")
+        XCTAssertTrue(got.contains(.warmed), "missing warmed in \(got)")
+
+        try? stdin.fileHandleForWriting.write(contentsOf: EngineRequest.quit.encoded())
+        XCTAssertTrue(waitForExit(proc, timeout: 10), "sidecar did not exit on .quit")
+        if proc.isRunning { proc.terminate() }
+    }
+
+    /// `.unloadFormatter` has no response by design; the interleaved ping's
+    /// pong proves the request was consumed without wedging the loop (and
+    /// that unloading with nothing resident is a no-op).
+    func testUnloadFormatterIsSilentAndDoesNotWedgeLoop() throws {
+        let helper = try locateHelper()
+        let proc = Process()
+        proc.executableURL = helper
+        let stdin = Pipe()
+        let stdout = Pipe()
+        proc.standardInput = stdin
+        proc.standardOutput = stdout
+        try proc.run()
+
+        try? stdin.fileHandleForWriting.write(contentsOf: EngineRequest.unloadFormatter.encoded())
+        try? stdin.fileHandleForWriting.write(contentsOf: EngineRequest.ping.encoded())
+
+        let response = readOneFrame(from: stdout.fileHandleForReading, timeout: 20)
+        XCTAssertEqual(response.flatMap(EngineResponse.decode), .pong)
+
+        try? stdin.fileHandleForWriting.write(contentsOf: EngineRequest.quit.encoded())
+        XCTAssertTrue(waitForExit(proc, timeout: 10), "sidecar did not exit on .quit")
         if proc.isRunning { proc.terminate() }
     }
 

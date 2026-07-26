@@ -92,14 +92,43 @@ public actor InProcessDictationEngine: DictationEngine {
         cleanup()
     }
 
+    /// Cancellation-responsive: cancelling the calling task (the session's
+    /// polish timeout) stops the generation within a token and throws — see
+    /// `TranscriptFormatter.format`.
     public func format(
         text: String, modelPath: String, options: FormatterOptions
     ) async throws -> String {
+        try await resolvedFormatter(modelPath: modelPath).format(text, options: options)
+    }
+
+    /// Load the formatter model + warm its kernels and prompt cache (anchored
+    /// for `options`, so the user's real toggles don't re-anchor on the first
+    /// format). Returns when the warm-up attempt finishes (callers
+    /// fire-and-forget it); failure is swallowed — the first real format then
+    /// cold-loads as before.
+    public func warmFormatter(modelPath: String, options: FormatterOptions) async {
+        try? await resolvedFormatter(modelPath: modelPath).prewarm(options: options)
+    }
+
+    /// Drop the resident formatter (model container + prompt cache, ~1 GB).
+    /// The formatter is asked to unload its own heavy state explicitly —
+    /// merely dropping our reference leaves the weights resident until the
+    /// actor's deferred deallocation, which can be arbitrarily late. The next
+    /// format — if any — reloads as on first use (cheap within the same
+    /// process: the kernels stay JIT-compiled and the weights page-cached).
+    public func unloadFormatter() async {
+        await formatter?.unload()
+        formatter = nil
+        formatterPath = nil
+    }
+
+    /// The resident formatter for `modelPath` (rebuilt if the path changed).
+    private func resolvedFormatter(modelPath: String) -> TranscriptFormatter {
         if formatter == nil || formatterPath != modelPath {
             formatter = TranscriptFormatter(directory: URL(fileURLWithPath: modelPath))
             formatterPath = modelPath
         }
-        return try await formatter!.format(text, options: options)
+        return formatter!
     }
 
     private func cleanup() {
