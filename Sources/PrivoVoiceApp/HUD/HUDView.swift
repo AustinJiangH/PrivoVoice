@@ -51,9 +51,11 @@ private struct StatusCapsule: View {
                                              limit: appState.recordingLimitSeconds,
                                              now: context.date)
             HStack(spacing: 7) {
-                if appState.phase == .transcribing {
+                if appState.phase == .transcribing || appState.phase == .polishing {
+                    // Polishing (formatter LLM pass) renders like transcribing,
+                    // with its own label so the extra beat is explained.
                     TranscribingIndicator(tint: AppTheme.progress)
-                    Text("Transcribing…")
+                    Text(appState.phase.label)
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
                 } else {
@@ -123,7 +125,10 @@ private struct TranscriptBox: View {
     }
 
     private var placeholder: String {
-        appState.phase == .transcribing ? "Transcribing…" : "Listening… speak now"
+        switch appState.phase {
+        case .transcribing, .polishing: return appState.phase.label
+        default: return "Listening… speak now"
+        }
     }
 }
 

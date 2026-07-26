@@ -28,6 +28,16 @@ public final class DictationController {
     /// Delivered the final transcript when a session completes (non-empty only).
     public var onFinalTranscript: ((String) -> Void)?
 
+    /// The installed formatter model directory when the final transcript should
+    /// be polished, or `nil` to skip. Injectable so tests can exercise the
+    /// polish path without a real `FormatterStore` install.
+    var formatterModelPath: () -> String? = {
+        FormatterStore.shared.isInstalled ? FormatterStore.shared.installDirectory.path : nil
+    }
+    /// How long `stop()` waits for the formatter before falling back to the raw
+    /// transcript. Injectable for tests.
+    var formatTimeoutSeconds: Double = 60
+
     /// Everything one live session owns.
     private final class Session {
         let capture: any AudioCapturing
@@ -50,6 +60,26 @@ public final class DictationController {
     private var active: Session?
     /// True while a released utterance is still finalizing (blocks a new start).
     private var finalizing = false
+    /// Bumped by `cancel()`; the stop-task compares it before delivering so a
+    /// cancel during the finalize/polish window drops that utterance instead
+    /// of letting a late commit/paste overlap the next session.
+    private var sessionEpoch = 0
+    /// Model path (+ options) the engine was last asked to pre-warm the
+    /// formatter for — debounces `warmFormatterIfNeeded` (re-warming is
+    /// harmless but pointless). Cleared by `unloadFormatterIfIdle()` so a
+    /// re-enable re-warms.
+    private var warmedFormatterPath: String?
+    private var warmedFormatterOptions: FormatterOptions?
+    /// True whenever the engine may hold a resident formatter (a warm-up was
+    /// sent or a polish ran) — debounces `unloadFormatterIfIdle`, whose
+    /// trigger re-fires on unrelated install-phase changes.
+    private var formatterMaybeResident = false
+    /// Serializes the warm/unload sends: each send awaits the previous one,
+    /// so they reach the engine in decision order. Two independent Tasks
+    /// could otherwise arrive swapped — an unload overtaking a warm drops the
+    /// model the user just asked for; a warm overtaking an unload resurrects
+    /// ~1 GB nothing wants.
+    private var residencyTask: Task<Void, Never>?
 
     public init(
         appState: AppState, settings: AppSettings, store: ModelStore,
@@ -152,41 +182,170 @@ public final class DictationController {
         // NB: do NOT cancel `session.run` — that would make the AsyncStream drop
         // its buffered tail. `capture.stop()` drains it cleanly.
 
+        // A cancel() during this task's finalize/polish window bumps the epoch;
+        // the checks below then drop the utterance (cancel already reset the
+        // published state) instead of committing/pasting it late.
+        let epoch = sessionEpoch
         Task { @MainActor in
             _ = await session.run?.value          // let forwarding drain
-            let final = ((try? await engine.end()) ?? "")
+            let raw = ((try? await engine.end()) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Optionally polish the final transcript through the formatter LLM.
+            // Best-effort with a hard timeout: any failure delivers the raw
+            // transcript. The RAW text still drives telemetry below.
+            var final = raw
+            if !raw.isEmpty, settings.formatFinalTranscript, sessionEpoch == epoch,
+               let modelPath = formatterModelPath() {
+                appState.setPhase(.polishing)
+                // Capability toggles are read at format time so mid-session
+                // Settings changes apply to the very next utterance.
+                let options = FormatterOptions(
+                    removesFillers: settings.formatterRemovesFillers,
+                    formatsLists: settings.formatterFormatsLists,
+                    appliesCorrections: settings.formatterAppliesCorrections)
+                formatterMaybeResident = true   // the engine just (cold-)loaded it
+                final = await Self.polished(raw, engine: engine, modelPath: modelPath,
+                                            options: options,
+                                            timeoutSeconds: formatTimeoutSeconds)
+                final = final.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard sessionEpoch == epoch else { return }   // cancelled mid-finalize
             appState.setPhase(.idle)
             appState.reset()
             finalizing = false    // now a new press may begin
             // Preserve the previous transcript on a no-speech / failed tap.
             if !final.isEmpty {
                 // Optionally prepend a separating space so consecutive dictations
-                // don't run together. The RAW `final` still drives telemetry — the
-                // separator isn't a word and must not change stats.
+                // don't run together. The RAW `raw` still drives telemetry — the
+                // separator isn't a word and formatting must not change stats.
                 let delivered = settings.autoSpacing ? Self.separated(final) : final
                 appState.commitTranscript(delivered)
                 onFinalTranscript?(delivered)
                 // Best-effort usage recording — never gates the transcript.
                 let seconds = session.sampleRate > 0
                     ? Double(session.framesFed) / session.sampleRate : 0
-                telemetry?.record(seconds: seconds, words: Self.wordCount(final),
+                telemetry?.record(seconds: seconds, words: Self.wordCount(raw),
                                   modelID: settings.selectedModelID)
             }
+            // The session is over — retry the residency decision a mid-session
+            // settings change couldn't apply (see syncResidencyAfterSession).
+            syncResidencyAfterSession()
         }
     }
 
-    /// Hard-cancel without finalizing (e.g. app quit).
+    /// Run the engine's transcript formatter, racing a timeout; the raw `text`
+    /// wins on any failure, timeout, or empty result.
+    ///
+    /// The group's implicit drain waits for BOTH children, so this only
+    /// returns at ~`timeoutSeconds` because the engines' `format` is
+    /// cancellation-responsive: `cancelAll()` makes the losing format child
+    /// throw promptly (helper: fails the pending IPC wait; in-process: stops
+    /// the token loop) instead of running to completion unobserved.
+    nonisolated static func polished(
+        _ text: String, engine: any DictationEngine, modelPath: String,
+        options: FormatterOptions, timeoutSeconds: Double
+    ) async -> String {
+        let result = await withTaskGroup(of: String?.self) { group in
+            group.addTask {
+                try? await engine.format(text: text, modelPath: modelPath, options: options)
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(max(0, timeoutSeconds) * 1_000_000_000))
+                return nil
+            }
+            // First finisher wins: the formatted text, or nil on error/timeout.
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        guard let result, !result.isEmpty else { return text }
+        return result
+    }
+
+    /// Ask the engine to pre-load the formatter LLM (fire-and-forget) so the
+    /// first formatted dictation doesn't pay the ~2 s cold model load on top of
+    /// the user's transcript. Only meaningful when transcript formatting is ON
+    /// and the model is installed; a no-op otherwise, and debounced per model
+    /// path. Call at quiet moments only — app startup, the formatting setting
+    /// turning on, a formatter download completing — NEVER per-dictation (the
+    /// sidecar's request loop is serial; at launch the race with a first
+    /// dictation is acceptable, it costs no more than today's cold format).
+    public func warmFormatterIfNeeded() {
+        guard settings.formatFinalTranscript, let path = formatterModelPath() else { return }
+        // Warm with the user's real capability toggles so the prompt-prefix
+        // cache is anchored for the options the first format will actually use.
+        let options = FormatterOptions(
+            removesFillers: settings.formatterRemovesFillers,
+            formatsLists: settings.formatterFormatsLists,
+            appliesCorrections: settings.formatterAppliesCorrections)
+        guard warmedFormatterPath != path || warmedFormatterOptions != options else { return }
+        warmedFormatterPath = path
+        warmedFormatterOptions = options
+        formatterMaybeResident = true
+        let engine = self.engine
+        residencyTask = Task { [previous = residencyTask] in
+            await previous?.value
+            await engine.warmFormatter(modelPath: path, options: options)
+        }
+    }
+
+    /// Counterpart of `warmFormatterIfNeeded`: ask the engine to drop the
+    /// resident formatter (~1 GB) — called when formatting turns OFF or the
+    /// model is removed. Skipped while a session is active/finalizing (the
+    /// formatter may be mid-use; `syncResidencyAfterSession` retries the
+    /// moment the session ends) and debounced while nothing can be resident.
+    /// Clears the warm debounce so a later re-enable re-warms.
+    public func unloadFormatterIfIdle() {
+        guard active == nil, !finalizing else { return }
+        guard formatterMaybeResident else { return }
+        formatterMaybeResident = false
+        warmedFormatterPath = nil
+        warmedFormatterOptions = nil
+        let engine = self.engine
+        residencyTask = Task { [previous = residencyTask] in
+            await previous?.value
+            await engine.unloadFormatter()
+        }
+    }
+
+    /// End-of-session residency sync, run whenever `finalizing` clears (the
+    /// stop-task's completion path and `cancel()`). While a session was live,
+    /// `unloadFormatterIfIdle` refused to touch a maybe-mid-use formatter —
+    /// and nothing else retries at session end (the app's Observation trigger
+    /// only fires on setting/install-phase changes), so a mid-session
+    /// toggle-off or model removal would leave ~1 GB resident indefinitely.
+    /// One decision, exactly one action: warm when formatting is on and the
+    /// model is installed (debounced — normally a no-op), unload otherwise
+    /// (debounced while nothing can be resident).
+    private func syncResidencyAfterSession() {
+        if settings.formatFinalTranscript, formatterModelPath() != nil {
+            warmFormatterIfNeeded()
+        } else {
+            unloadFormatterIfIdle()
+        }
+    }
+
+    /// Hard-cancel without finalizing (e.g. app quit) — including a released
+    /// utterance still in its finalize/polish window: the epoch bump makes the
+    /// in-flight stop-task drop the transcript instead of committing it late,
+    /// and `engine.cancel()` unblocks a pending finalize/format promptly.
     public func cancel() {
+        guard active != nil || finalizing else { return }
+        sessionEpoch += 1
         finalizing = false
-        guard let session = active else { return }
-        active = nil
-        session.stopRequested = true
-        session.run?.cancel()   // hard abort: dropping the tail is fine here
-        session.capture.stop()
+        if let session = active {
+            active = nil
+            session.stopRequested = true
+            session.run?.cancel()   // hard abort: dropping the tail is fine here
+            session.capture.stop()
+        }
+        let engine = self.engine
         Task { await engine.cancel() }
         appState.setPhase(.idle)
         appState.reset()
+        // `finalizing` just cleared without the stop-task's completion path —
+        // this is the cancelled session's end-of-session residency retry.
+        syncResidencyAfterSession()
     }
 
     // MARK: Helpers
@@ -205,11 +364,14 @@ public final class DictationController {
 
     /// Prepend a single separating space unless the text already starts with
     /// whitespace or is empty — so back-to-back dictations don't run together.
-    /// Idempotent: `separated("")` == "" and text that already leads with
-    /// whitespace is returned unchanged.
+    /// Multi-line text (a formatted numbered list) gets a newline instead, so
+    /// item 1 doesn't glue onto the previous line's prose. Idempotent:
+    /// `separated("")` == "" and text that already leads with whitespace is
+    /// returned unchanged.
     nonisolated static func separated(_ text: String) -> String {
         guard let first = text.first else { return text }
-        return first.isWhitespace ? text : " " + text
+        if first.isWhitespace { return text }
+        return (text.contains("\n") ? "\n" : " ") + text
     }
 
     /// The live full-context transcriber emits a bracketed "[ preparing <model>

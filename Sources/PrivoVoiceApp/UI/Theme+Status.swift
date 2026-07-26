@@ -11,7 +11,7 @@ extension DictationPhase {
         switch self {
         case .idle: return .secondary
         case .listening: return AppTheme.positive
-        case .transcribing: return AppTheme.progress
+        case .transcribing, .polishing: return AppTheme.progress
         }
     }
 }

@@ -36,6 +36,17 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/PrivoVoice" "$APP/Contents/MacOS/PrivoVoice"
 cp "$BIN_DIR/PrivoVoiceHelper" "$APP/Contents/MacOS/PrivoVoiceHelper"
 
+# SwiftPM resource bundles (MLX metallib, Voixful model registry, Hub data).
+# Inside an .app, Bundle.main resolves to the app bundle for BOTH processes —
+# even the bare sidecar in Contents/MacOS — so Bundle.module looks them up in
+# Contents/Resources. Missing bundles fail at RUNTIME, not launch (verified:
+# the formatter LLM's Metal kernels live in mlx-swift_Cmlx.bundle, and without
+# it the sidecar dies silently on the first format request).
+for bundle in "$BIN_DIR"/*.bundle; do
+    [ -e "$bundle" ] || continue
+    cp -R "$bundle" "$APP/Contents/Resources/$(basename "$bundle")"
+done
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -69,6 +80,12 @@ else
     echo "[make-app] '$IDENTITY' not found — ad-hoc signing (you'll re-grant permissions each build)."
     echo "[make-app] Run ./scripts/setup-signing.sh once to make grants persist."
 fi
+# Nested resource bundles count as subcomponents — sign them first or the
+# outer app signature is rejected.
+for bundle in "$APP"/Contents/Resources/*.bundle; do
+    [ -e "$bundle" ] || continue
+    codesign --force --sign "$SIGN_ID" "$bundle"
+done
 codesign --force --sign "$SIGN_ID" "$APP/Contents/MacOS/PrivoVoiceHelper"
 codesign --force --sign "$SIGN_ID" "$APP"
 

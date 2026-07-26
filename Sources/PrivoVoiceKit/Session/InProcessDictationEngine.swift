@@ -13,6 +13,10 @@ public actor InProcessDictationEngine: DictationEngine {
     private var startTask: Task<Void, Error>?
     private var readerTask: Task<String?, Never>?
     private var format: AVAudioFormat?
+    /// Resident transcript formatter (and the model directory it was built
+    /// for), kept warm across utterances so only the first format cold-loads.
+    private var formatter: TranscriptFormatter?
+    private var formatterPath: String?
 
     public init() {}
 
@@ -86,6 +90,58 @@ public actor InProcessDictationEngine: DictationEngine {
         await analyzer?.cancelAndFinishNow()
         readerTask?.cancel()
         cleanup()
+    }
+
+    /// Cancellation-responsive: cancelling the calling task (the session's
+    /// polish timeout) stops the generation within a token and throws — see
+    /// `TranscriptFormatter.format`.
+    public func format(
+        text: String, modelPath: String, options: FormatterOptions
+    ) async throws -> String {
+        try await resolvedFormatter(modelPath: modelPath).format(text, options: options)
+    }
+
+    /// Load the formatter model + warm its kernels and prompt cache (anchored
+    /// for `options`, so the user's real toggles don't re-anchor on the first
+    /// format). Returns when the warm-up attempt finishes (callers
+    /// fire-and-forget it); failure is swallowed — the first real format then
+    /// cold-loads as before.
+    public func warmFormatter(modelPath: String, options: FormatterOptions) async {
+        try? await resolvedFormatter(modelPath: modelPath).prewarm(options: options)
+    }
+
+    /// Drop the resident formatter (model container + prompt cache, ~1 GB).
+    /// The formatter is asked to unload its own heavy state explicitly —
+    /// merely dropping our reference leaves the weights resident until the
+    /// actor's deferred deallocation, which can be arbitrarily late. The next
+    /// format — if any — reloads as on first use (cheap within the same
+    /// process: the kernels stay JIT-compiled and the weights page-cached).
+    public func unloadFormatter() async {
+        // Nil the reference BEFORE the await: actor reentrancy would otherwise
+        // let a racing warm/format grab the outgoing instance mid-unload and
+        // reload ~1 GB into a formatter nothing references — which could then
+        // never be unloaded.
+        let outgoing = formatter
+        formatter = nil
+        formatterPath = nil
+        await outgoing?.unload()
+    }
+
+    /// The resident formatter for `modelPath` (rebuilt if the path changed).
+    private func resolvedFormatter(modelPath: String) -> TranscriptFormatter {
+        if formatter == nil || formatterPath != modelPath {
+            // Unload a replaced instance explicitly (fire-and-forget) — same
+            // reasoning as `unloadFormatter`: dropping the reference alone
+            // leaves its weights resident indefinitely. The reference is
+            // already swapped out by the time the task runs, so a concurrent
+            // request can only see the new instance.
+            if let outgoing = formatter {
+                Task { await outgoing.unload() }
+            }
+            formatter = TranscriptFormatter(directory: URL(fileURLWithPath: modelPath))
+            formatterPath = modelPath
+        }
+        return formatter!
     }
 
     private func cleanup() {

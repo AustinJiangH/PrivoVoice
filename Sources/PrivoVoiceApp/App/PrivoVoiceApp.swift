@@ -42,6 +42,7 @@ extension DictationPhase {
         case .idle: return "waveform"
         case .listening: return "mic.fill"
         case .transcribing: return "ellipsis"
+        case .polishing: return "sparkles"
         }
     }
 }

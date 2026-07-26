@@ -26,6 +26,22 @@ final class AutoSpacingTests: XCTestCase {
         XCTAssertEqual(DictationController.separated("Hello, world."), " Hello, world.")
     }
 
+    func testSeparatedMultilineListPrependsNewline() {
+        // A formatted list must start on its own line — a space separator
+        // would glue "Intro." (and item 1) onto the previous line's prose.
+        XCTAssertEqual(
+            DictationController.separated("Intro.\n1. First item.\n2. Second item."),
+            "\nIntro.\n1. First item.\n2. Second item.")
+    }
+
+    func testSeparatedMultilineWithLeadingWhitespaceUnchanged() {
+        // Idempotency holds for lists too: an already-separated list is
+        // returned unchanged.
+        XCTAssertEqual(
+            DictationController.separated("\nIntro.\n1. Item."),
+            "\nIntro.\n1. Item.")
+    }
+
     // MARK: KeyCombo.badgeComponents
 
     func testBadgeComponentsFunctionOnly() {

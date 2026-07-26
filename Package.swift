@@ -32,6 +32,11 @@ let package = Package(
         // The Voixful engine package lives alongside this one (../voixful). Local path keeps the app in
         // lock-step with the engine it dogfoods.
         .package(path: "../voixful"),
+        // MLX inference for the optional transcript-formatter LLM (MLXLLM/MLXLMCommon).
+        .package(url: "https://github.com/ml-explore/mlx-swift-examples", from: "2.29.1"),
+        // Hugging Face Hub downloads + tokenizers for the formatter model. Pinned
+        // to the same minor mlx-swift-examples uses so resolution stays coherent.
+        .package(url: "https://github.com/huggingface/swift-transformers", .upToNextMinor(from: "1.0.0")),
     ],
     targets: [
         // MARK: Cross-process wire protocol (Foundation-only, both processes share)
@@ -50,6 +55,11 @@ let package = Package(
                 .product(name: "VoixfulCanaryQwen", package: "Voixful"),
                 .product(name: "VoixfulWhisper", package: "Voixful"),
                 .product(name: "VoixfulFullContext", package: "Voixful"),
+                // Optional final-transcript formatter (small on-device LLM).
+                .product(name: "MLXLLM", package: "mlx-swift-examples"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-examples"),
+                .product(name: "Hub", package: "swift-transformers"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
             ]
         ),
 

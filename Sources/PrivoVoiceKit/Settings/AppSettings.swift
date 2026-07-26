@@ -40,6 +40,27 @@ public final class AppSettings {
     public var huggingFaceToken: String? {
         didSet { scheduleSave() }
     }
+    /// Post-process the final transcript through the on-device formatter LLM
+    /// (punctuation, casing, obvious mis-hearings, spoken enumerations →
+    /// lists). OFF by default; only takes effect once the formatter model is
+    /// installed (see `FormatterStore`).
+    public var formatFinalTranscript: Bool {
+        didSet { scheduleSave() }
+    }
+    /// Formatter capability: strip filler words and stutters (um, uh, ah, er).
+    /// Default on; only meaningful while `formatFinalTranscript` is on.
+    public var formatterRemovesFillers: Bool {
+        didSet { scheduleSave() }
+    }
+    /// Formatter capability: render spoken enumerations as lists. Default on.
+    public var formatterFormatsLists: Bool {
+        didSet { scheduleSave() }
+    }
+    /// Formatter capability: apply verbal self-corrections ("monday no wait
+    /// tuesday" → "Tuesday"). Default on.
+    public var formatterAppliesCorrections: Bool {
+        didSet { scheduleSave() }
+    }
     /// Opt-in: share anonymous aggregate usage (counts + device metadata) with
     /// the collector. OFF by default — the local Dashboard works regardless, and
     /// nothing is ever sent while this is false. Never includes transcript text.
@@ -87,6 +108,10 @@ public final class AppSettings {
             self.hotkey = persisted.hotkey ?? .defaultCombo
             self.localeIdentifier = persisted.localeIdentifier ?? "en-US"
             self.huggingFaceToken = persisted.huggingFaceToken
+            self.formatFinalTranscript = persisted.formatFinalTranscript ?? false
+            self.formatterRemovesFillers = persisted.formatterRemovesFillers ?? true
+            self.formatterFormatsLists = persisted.formatterFormatsLists ?? true
+            self.formatterAppliesCorrections = persisted.formatterAppliesCorrections ?? true
             self.telemetryEnabled = persisted.telemetryEnabled ?? false
             self.showLiveTranscription = persisted.showLiveTranscription ?? true
             self.hasCompletedOnboarding = persisted.hasCompletedOnboarding ?? false
@@ -98,6 +123,10 @@ public final class AppSettings {
             self.hotkey = .defaultCombo
             self.localeIdentifier = "en-US"
             self.huggingFaceToken = nil
+            self.formatFinalTranscript = false
+            self.formatterRemovesFillers = true
+            self.formatterFormatsLists = true
+            self.formatterAppliesCorrections = true
             self.telemetryEnabled = false
             self.showLiveTranscription = true
             self.hasCompletedOnboarding = false
@@ -131,6 +160,10 @@ public final class AppSettings {
             hotkey: hotkey,
             localeIdentifier: localeIdentifier,
             huggingFaceToken: huggingFaceToken,
+            formatFinalTranscript: formatFinalTranscript,
+            formatterRemovesFillers: formatterRemovesFillers,
+            formatterFormatsLists: formatterFormatsLists,
+            formatterAppliesCorrections: formatterAppliesCorrections,
             telemetryEnabled: telemetryEnabled,
             showLiveTranscription: showLiveTranscription,
             hasCompletedOnboarding: hasCompletedOnboarding
@@ -150,6 +183,10 @@ public final class AppSettings {
         var hotkey: KeyCombo?
         var localeIdentifier: String?
         var huggingFaceToken: String?
+        var formatFinalTranscript: Bool?
+        var formatterRemovesFillers: Bool?
+        var formatterFormatsLists: Bool?
+        var formatterAppliesCorrections: Bool?
         var telemetryEnabled: Bool?
         var showLiveTranscription: Bool?
         var hasCompletedOnboarding: Bool?

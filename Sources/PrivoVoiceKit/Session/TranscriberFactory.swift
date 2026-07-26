@@ -56,6 +56,20 @@ public enum TranscriberFactory {
         case .whisper:
             return LiveFullContextTranscriber<WhisperEngine>(
                 modelURL: modelURL, piecesURL: pieces, locale: locale)
+        case .qwen3:
+            // The engine can detect Qwen3-ASR assets, but PrivoVoice doesn't ship
+            // a catalog row or bundle a live runtime module for them yet — fail
+            // with a clear message instead of loading the wrong decode path
+            // (only reachable via a locally imported/mislabeled asset).
+            throw UnsupportedBackendError(backend: backend)
+        }
+    }
+
+    /// A backend the engine can detect but this app bundles no live runtime for.
+    public struct UnsupportedBackendError: Error, CustomStringConvertible {
+        public let backend: ModelBackend
+        public var description: String {
+            "The \(backend.rawValue) model backend isn't supported by PrivoVoice yet."
         }
     }
 }
