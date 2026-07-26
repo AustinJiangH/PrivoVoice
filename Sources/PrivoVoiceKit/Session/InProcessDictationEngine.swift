@@ -117,14 +117,27 @@ public actor InProcessDictationEngine: DictationEngine {
     /// format — if any — reloads as on first use (cheap within the same
     /// process: the kernels stay JIT-compiled and the weights page-cached).
     public func unloadFormatter() async {
-        await formatter?.unload()
+        // Nil the reference BEFORE the await: actor reentrancy would otherwise
+        // let a racing warm/format grab the outgoing instance mid-unload and
+        // reload ~1 GB into a formatter nothing references — which could then
+        // never be unloaded.
+        let outgoing = formatter
         formatter = nil
         formatterPath = nil
+        await outgoing?.unload()
     }
 
     /// The resident formatter for `modelPath` (rebuilt if the path changed).
     private func resolvedFormatter(modelPath: String) -> TranscriptFormatter {
         if formatter == nil || formatterPath != modelPath {
+            // Unload a replaced instance explicitly (fire-and-forget) — same
+            // reasoning as `unloadFormatter`: dropping the reference alone
+            // leaves its weights resident indefinitely. The reference is
+            // already swapped out by the time the task runs, so a concurrent
+            // request can only see the new instance.
+            if let outgoing = formatter {
+                Task { await outgoing.unload() }
+            }
             formatter = TranscriptFormatter(directory: URL(fileURLWithPath: modelPath))
             formatterPath = modelPath
         }

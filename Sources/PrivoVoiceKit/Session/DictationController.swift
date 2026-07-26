@@ -74,6 +74,12 @@ public final class DictationController {
     /// sent or a polish ran) — debounces `unloadFormatterIfIdle`, whose
     /// trigger re-fires on unrelated install-phase changes.
     private var formatterMaybeResident = false
+    /// Serializes the warm/unload sends: each send awaits the previous one,
+    /// so they reach the engine in decision order. Two independent Tasks
+    /// could otherwise arrive swapped — an unload overtaking a warm drops the
+    /// model the user just asked for; a warm overtaking an unload resurrects
+    /// ~1 GB nothing wants.
+    private var residencyTask: Task<Void, Never>?
 
     public init(
         appState: AppState, settings: AppSettings, store: ModelStore,
@@ -221,6 +227,9 @@ public final class DictationController {
                 telemetry?.record(seconds: seconds, words: Self.wordCount(raw),
                                   modelID: settings.selectedModelID)
             }
+            // The session is over — retry the residency decision a mid-session
+            // settings change couldn't apply (see syncResidencyAfterSession).
+            syncResidencyAfterSession()
         }
     }
 
@@ -274,15 +283,18 @@ public final class DictationController {
         warmedFormatterOptions = options
         formatterMaybeResident = true
         let engine = self.engine
-        Task { await engine.warmFormatter(modelPath: path, options: options) }
+        residencyTask = Task { [previous = residencyTask] in
+            await previous?.value
+            await engine.warmFormatter(modelPath: path, options: options)
+        }
     }
 
     /// Counterpart of `warmFormatterIfNeeded`: ask the engine to drop the
     /// resident formatter (~1 GB) — called when formatting turns OFF or the
     /// model is removed. Skipped while a session is active/finalizing (the
-    /// formatter may be mid-use; the next state-change trigger retries at a
-    /// quiet moment) and debounced while nothing can be resident. Clears the
-    /// warm debounce so a later re-enable re-warms.
+    /// formatter may be mid-use; `syncResidencyAfterSession` retries the
+    /// moment the session ends) and debounced while nothing can be resident.
+    /// Clears the warm debounce so a later re-enable re-warms.
     public func unloadFormatterIfIdle() {
         guard active == nil, !finalizing else { return }
         guard formatterMaybeResident else { return }
@@ -290,7 +302,27 @@ public final class DictationController {
         warmedFormatterPath = nil
         warmedFormatterOptions = nil
         let engine = self.engine
-        Task { await engine.unloadFormatter() }
+        residencyTask = Task { [previous = residencyTask] in
+            await previous?.value
+            await engine.unloadFormatter()
+        }
+    }
+
+    /// End-of-session residency sync, run whenever `finalizing` clears (the
+    /// stop-task's completion path and `cancel()`). While a session was live,
+    /// `unloadFormatterIfIdle` refused to touch a maybe-mid-use formatter —
+    /// and nothing else retries at session end (the app's Observation trigger
+    /// only fires on setting/install-phase changes), so a mid-session
+    /// toggle-off or model removal would leave ~1 GB resident indefinitely.
+    /// One decision, exactly one action: warm when formatting is on and the
+    /// model is installed (debounced — normally a no-op), unload otherwise
+    /// (debounced while nothing can be resident).
+    private func syncResidencyAfterSession() {
+        if settings.formatFinalTranscript, formatterModelPath() != nil {
+            warmFormatterIfNeeded()
+        } else {
+            unloadFormatterIfIdle()
+        }
     }
 
     /// Hard-cancel without finalizing (e.g. app quit) — including a released
@@ -311,6 +343,9 @@ public final class DictationController {
         Task { await engine.cancel() }
         appState.setPhase(.idle)
         appState.reset()
+        // `finalizing` just cleared without the stop-task's completion path —
+        // this is the cancelled session's end-of-session residency retry.
+        syncResidencyAfterSession()
     }
 
     // MARK: Helpers

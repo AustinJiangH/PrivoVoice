@@ -36,6 +36,7 @@ flowchart LR
 - ⌨️ **Works everywhere** — pastes into any app at the cursor; no per-app integration.
 - ⚡ **Push-to-talk** — hold to talk, release to type. Your trigger key is *consumed*, so it never types while you dictate.
 - 🧠 **Your choice of model** — from a 0.6 B streaming model for lowest latency to a 2.5 B model for the best punctuation. Download in-app.
+- ✍️ **Optional transcript polish** — an on-device LLM (Qwen3 1.7B, MLX 4-bit, ~1 GB opt-in download) fixes punctuation and mis-hearings, strips filler words, applies spoken self-corrections ("Monday — no wait, Tuesday"), and formats spoken enumerations as numbered lists. Off by default; adds ~0.1–0.35 s per dictation once warm.
 - 🛡️ **Minimal permissions** — Microphone + Accessibility only. **No Input Monitoring, ever.**
 - 🧩 **Crash-isolated** — the model runs in a separate process, so an engine hiccup can't take the app down.
 - 🆓 **Free & open source** — Apache-2.0, no account, no paywall.
@@ -133,10 +134,10 @@ flowchart LR
 
 The app splits into portable and macOS-only pieces so the non-UI logic could power a future iOS app too:
 
-- **`PrivoVoiceKit`** *(portable)* — model catalog, download/store, settings, `AudioCapture`, `DictationController`, and the `DictationEngine` protocol + in-process engine. No AppKit/SwiftUI.
+- **`PrivoVoiceKit`** *(portable)* — model catalog, download/store, settings, `AudioCapture`, `DictationController`, the `DictationEngine` protocol + in-process engine, and the optional transcript formatter (`Formatting/`: MLX LLM with prefix-KV caching). No AppKit/SwiftUI.
 - **`PrivoVoiceIPC`** *(portable)* — the tiny stdio wire protocol shared by both processes.
 - **`PrivoVoiceApp`** *(macOS)* — SwiftUI UI (Settings + Models), HUD, menu bar, hotkey, paste, and the sidecar-spawning engine.
-- **`PrivoVoiceHelper`** *(macOS)* — the resident engine process (the sidecar).
+- **`PrivoVoiceHelper`** *(macOS)* — the resident engine process (the sidecar); also hosts the resident formatter LLM when transcript polish is on.
 
 The split hides behind the `DictationEngine` protocol: macOS injects the sidecar;
 a future iOS app reuses `PrivoVoiceKit` with the in-process engine instead — no

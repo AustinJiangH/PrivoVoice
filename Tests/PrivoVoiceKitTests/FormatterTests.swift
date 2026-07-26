@@ -260,6 +260,87 @@ final class FormatterListifyTests: XCTestCase {
             TranscriptFormatter.listified("First I need coffee. Second I'm booking the room."),
             "1. I need coffee.\n2. I'm booking the room.")
     }
+
+    func testItemFinalTitleAbbreviationBailsTheWholeRun() {
+        // Review case: the splitter cuts "Prof. Brown" in half, stranding
+        // "Brown about it." — the whole input must come back untouched.
+        let s = "First we tag the build. Second we ping Prof. Brown about it."
+        XCTAssertEqual(TranscriptFormatter.listified(s), s)
+    }
+
+    func testExpandedAbbreviationSetBailsTheWholeRun() {
+        // Sampling of the widened whitelist ("Sgt.", "Ave.", "no.", …): every
+        // item-final abbreviation is a bad split, so everything stays prose.
+        for s in [
+            "First call the office. Second brief Sgt. Miller on the change.",
+            "First we lock up. Second we drive down Fifth Ave. Then we park.",
+            "First check the list. Second file it under no. 5 in the binder.",
+            "First we email Rev. Green. Second we book the hall.",
+        ] {
+            XCTAssertEqual(TranscriptFormatter.listified(s), s)
+        }
+    }
+
+    func testUnknownCapitalizedAbbreviationTripsStructuralBackstop() {
+        // "Msgr." is NOT in the whitelist — the structural backstop (short
+        // capitalized ender + capitalized next sentence) must still bail.
+        let s = "First we tag the build. Second we ping Msgr. Kelly about it."
+        XCTAssertEqual(TranscriptFormatter.listified(s), s)
+    }
+
+    func testLowercaseItemEnderKeepsProseAfterListRendering() {
+        // The backstop must NOT bail genuine prose after a list: "audio." is a
+        // lowercase ender, so "All right, …" is a real continuation.
+        XCTAssertEqual(
+            TranscriptFormatter.listified(
+                "First we set the card. Second we test the audio. "
+                    + "All right, that didn't work."),
+            "1. We set the card.\n2. We test the audio.\nAll right, that didn't work.")
+    }
+
+    // MARK: comma after the ordinal disables the idiom veto
+
+    func testCommaAfterOrdinalSkipsIdiomCheck() {
+        // "second hand" is an idiom — but "Second, hand them out" is not:
+        // the comma (consumed at strip time) marks a real enumeration.
+        XCTAssertEqual(
+            TranscriptFormatter.listified(
+                "First, collect the badges. Second, hand them out at the door."),
+            "1. Collect the badges.\n2. Hand them out at the door.")
+    }
+
+    func testCommaGuessAndOffSiteEnumerationsListify() {
+        XCTAssertEqual(
+            TranscriptFormatter.listified(
+                "First, off-site backups need testing. "
+                    + "Second, guess the password reset flow."),
+            "1. Off-site backups need testing.\n2. Guess the password reset flow.")
+    }
+
+    func testIdiomWithoutCommaStillStaysProse() {
+        // No comma → the idiom veto still applies ("second hand me" reads as
+        // "second-hand"); a benign miss, never a half-stripped run.
+        let s = "First we lock the date. Second hand me the badge list."
+        XCTAssertEqual(TranscriptFormatter.listified(s), s)
+    }
+
+    // MARK: rendering details
+
+    func testCamelCaseFirstWordIsNotMangled() {
+        // "iPhone" must not become "IPhone" — only capitalize when the first
+        // word has no uppercase of its own.
+        XCTAssertEqual(
+            TranscriptFormatter.listified(
+                "First iPhone setup gets done. Second we sync the contacts."),
+            "1. iPhone setup gets done.\n2. We sync the contacts.")
+    }
+
+    func testNotArmedInputIsReturnedByteIdentical() {
+        // When no list is built the ORIGINAL string comes back byte-identical
+        // — the old sentence-split+rejoin collapsed runs of spaces.
+        let s = "We shipped it.  Double  spaces must survive the pass."
+        XCTAssertEqual(TranscriptFormatter.listified(s), s)
+    }
 }
 
 // MARK: - Settings
@@ -628,13 +709,22 @@ actor FormatMockEngine: DictationEngine {
     private(set) var warmCalls: [String] = []
     private(set) var warmOptions: [FormatterOptions] = []
     private(set) var unloadCalls = 0
+    /// Ordered warm/unload COMPLETIONS. "warm" lands only after a deliberate
+    /// delay, so an unchained unload could overtake it — the residency-order
+    /// test fails without the controller's `residencyTask` serialization.
+    private(set) var residencyEvents: [String] = []
 
     func warmFormatter(modelPath: String, options: FormatterOptions) async {
         warmCalls.append(modelPath)
         warmOptions.append(options)
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        residencyEvents.append("warm")
     }
 
-    func unloadFormatter() { unloadCalls += 1 }
+    func unloadFormatter() {
+        unloadCalls += 1
+        residencyEvents.append("unload")
+    }
 
     func format(text: String, modelPath: String, options: FormatterOptions) async throws -> String {
         formatCalls += 1
@@ -978,12 +1068,160 @@ final class FormatterControllerTests: XCTestCase {
         let unloads = await engine.unloadCalls
         XCTAssertEqual(unloads, 0)
     }
+
+    // MARK: end-of-session residency sync
+
+    @MainActor
+    func testToggleOffMidSessionUnloadsAfterStop() async throws {
+        // Formatting is toggled OFF while a session runs: the Observation
+        // trigger fires mid-session (refused — formatter may be mid-use) and
+        // never again, so the end-of-session sync must send the unload.
+        let engine = FormatMockEngine()
+        let (controller, appState, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmCalls.count == 1 }
+
+        controller.start()
+        settings.formatFinalTranscript = false      // user toggles OFF mid-session
+        controller.unloadFormatterIfIdle()          // the app's trigger — refused now
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        var unloads = await engine.unloadCalls
+        XCTAssertEqual(unloads, 0, "mid-session unload must be refused")
+
+        controller.stop()
+        await waitUntil { appState.phase == .idle }
+        await waitUntil { await engine.unloadCalls == 1 }
+        // And the decision is single: no format ran (setting off at stop).
+        let formats = await engine.formatCalls
+        XCTAssertEqual(formats, 0)
+        unloads = await engine.unloadCalls
+        XCTAssertEqual(unloads, 1)
+    }
+
+    @MainActor
+    func testToggleOffMidSessionUnloadsAfterCancel() async throws {
+        // Same hole via the other session exit: cancel() clears `finalizing`
+        // without running the stop-task's completion path.
+        let engine = FormatMockEngine()
+        let (controller, _, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmCalls.count == 1 }
+
+        controller.start()
+        settings.formatFinalTranscript = false
+        controller.cancel()
+        await waitUntil { await engine.unloadCalls == 1 }
+    }
+
+    @MainActor
+    func testSessionEndKeepsFormatterWarmWhenStillEnabled() async throws {
+        // The end-of-session sync must decide "nothing to do" when formatting
+        // stays on: no unload, no duplicate warm (debounced by path+options).
+        let engine = FormatMockEngine()
+        let (controller, appState, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.warmCalls.count == 1 }
+
+        controller.start()
+        controller.stop()
+        await waitUntil { appState.phase == .idle }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let unloads = await engine.unloadCalls
+        let warms = await engine.warmCalls
+        XCTAssertEqual(unloads, 0)
+        XCTAssertEqual(warms, ["/tmp/formatter-model"])
+    }
+
+    // MARK: warm/unload ordering
+
+    @MainActor
+    func testResidencySendsReachTheEngineInDecisionOrder() async throws {
+        // warm → unload → warm issued back-to-back: each send chains on the
+        // previous (`residencyTask`), so the mock's slow warm cannot be
+        // overtaken by the following unload.
+        let engine = FormatMockEngine()
+        let (controller, _, settings) = try makeController(engine: engine)
+        settings.formatFinalTranscript = true
+        controller.formatterModelPath = { "/tmp/formatter-model" }
+        controller.warmFormatterIfNeeded()
+        controller.unloadFormatterIfIdle()
+        controller.warmFormatterIfNeeded()
+        await waitUntil { await engine.residencyEvents.count == 3 }
+        let events = await engine.residencyEvents
+        XCTAssertEqual(events, ["warm", "unload", "warm"])
+    }
 }
 
 /// Tiny lock-free-enough box for test closures (main-actor confined use).
 private final class SendableBox<T>: @unchecked Sendable {
     var value: T
     init(_ value: T) { self.value = value }
+}
+
+// MARK: - Serialized generation queue (model-free)
+
+/// Ordered event recorder for queue tests.
+private actor EventLog {
+    private(set) var all: [String] = []
+    func add(_ event: String) { all.append(event) }
+}
+
+final class FormatterSerializedQueueTests: XCTestCase {
+    /// `unload()` runs `dropResidentState`, which drops the queue-tail handle
+    /// — but ONLY when the unload itself is the tail. If work was queued
+    /// behind the unload, nilling the tail would sever the serialization
+    /// chain and let two later ops interleave: op C (enqueued after the
+    /// unload finished) must still wait for op B (enqueued before).
+    func testUnloadPreservesQueueOrderForLaterOps() async throws {
+        let formatter = TranscriptFormatter(
+            directory: URL(fileURLWithPath: "/nonexistent-model-dir"))
+        let events = EventLog()
+
+        // A (slow) … unload … B (slow, queued BEHIND the unload).
+        let a = Task {
+            await formatter.enqueueSerializedForTesting {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                await events.add("A")
+            }
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let unload = Task { await formatter.unload() }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let b = Task {
+            await formatter.enqueueSerializedForTesting {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                await events.add("B")
+            }
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // Once the unload has finished (B is still sleeping), a fresh op must
+        // queue behind B — with a severed chain it would run immediately.
+        await unload.value
+        await formatter.enqueueSerializedForTesting { await events.add("C") }
+        await a.value
+        await b.value
+        let all = await events.all
+        XCTAssertEqual(all, ["A", "B", "C"])
+    }
+
+    /// The normal case still tears the queue down: an unload with nothing
+    /// queued behind it must not leave a stale tail handle pinning captures.
+    func testUnloadAloneStillRunsAndLaterOpsWork() async throws {
+        let formatter = TranscriptFormatter(
+            directory: URL(fileURLWithPath: "/nonexistent-model-dir"))
+        let events = EventLog()
+        await formatter.unload()
+        await formatter.enqueueSerializedForTesting { await events.add("after") }
+        let all = await events.all
+        XCTAssertEqual(all, ["after"])
+    }
 }
 
 // MARK: - Prefix-cache anchor arithmetic (pure)

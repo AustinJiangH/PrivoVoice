@@ -8,7 +8,7 @@ struct SettingsPane: View {
     @Environment(AppEnvironment.self) private var env
 
     /// Shown when the formatting toggle is switched on without the model
-    /// installed — the ~700 MB download needs explicit consent first.
+    /// installed — the ~1 GB download needs explicit consent first.
     @State private var confirmFormatterDownload = false
 
     var body: some View {

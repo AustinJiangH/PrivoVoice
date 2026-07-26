@@ -1,7 +1,9 @@
 // The PrivoVoice engine sidecar — the resident process that loads the Core AI model
-// and transcribes, isolated from the UI. Reads framed `EngineRequest`s from
-// stdin, drives an `InProcessDictationEngine`, and writes `EngineResponse`s to
-// stdout. If it crashes or hangs, the UI process survives and respawns it.
+// and transcribes, isolated from the UI. It also hosts the optional transcript
+// formatter LLM, kept resident with a prefilled prompt cache between requests.
+// Reads framed `EngineRequest`s from stdin, drives an `InProcessDictationEngine`,
+// and writes `EngineResponse`s to stdout. If it crashes or hangs, the UI process
+// survives and respawns it.
 
 import Foundation
 import MLX
@@ -45,6 +47,15 @@ struct EngineHelper {
         }
         reader.stackSize = 1 << 20
         reader.start()
+
+        // Serializes formatter warm/unload work: each hop awaits the previous
+        // one, so the two reach the engine in request order while still
+        // running OFF the serial request loop below (a `.begin` arriving
+        // mid-load must not wedge behind ~2 s of model loading). Without the
+        // chain, an off-loop warm and an on/off-loop unload are unordered at
+        // the engine actor — a later unload could complete before an earlier
+        // warm and leave ~1 GB resident that the app believes is gone.
+        var residencyTask: Task<Void, Never>?
 
         // Process requests strictly in order.
         for await request in requests {
@@ -102,11 +113,12 @@ struct EngineHelper {
             case let .warmFormatter(modelPath, removesFillers, formatsLists, appliesCorrections):
                 // Best-effort formatter warm-up (model load + kernel/prompt
                 // cache priming, anchored for the caller's real options). Runs
-                // OFF the serial request loop so a `.begin` arriving mid-load
-                // isn't wedged behind ~2 s of model loading; the formatter
-                // itself serializes against concurrent `.format`s. `.warmed` is
+                // off the serial request loop — but chained on `residencyTask`
+                // so it stays ordered against unloads; the formatter itself
+                // serializes against concurrent `.format`s. `.warmed` is
                 // informational — the app fires-and-forgets, probes can await it.
-                Task {
+                residencyTask = Task { [previous = residencyTask] in
+                    await previous?.value
                     await engine.warmFormatter(
                         modelPath: modelPath,
                         options: FormatterOptions(
@@ -118,14 +130,19 @@ struct EngineHelper {
 
             case .unloadFormatter:
                 // Fire-and-forget counterpart of `.warmFormatter`: drop the
-                // resident formatter model (~1 GB). No response by design; the
-                // stderr line makes "did the memory really go?" checkable from
-                // the parent's console (stderr is inherited for debugging).
-                await engine.unloadFormatter()
-                let s = GPU.snapshot()
-                let note = "[helper] formatter unloaded — MLX active \(s.activeMemory >> 20) MB, "
-                    + "cache \(s.cacheMemory >> 20) MB\n"
-                FileHandle.standardError.write(Data(note.utf8))
+                // resident formatter model (~1 GB), chained on `residencyTask`
+                // so it can never overtake an earlier warm-up (and vice
+                // versa). No response by design; the stderr line makes "did
+                // the memory really go?" checkable from the parent's console
+                // (stderr is inherited for debugging).
+                residencyTask = Task { [previous = residencyTask] in
+                    await previous?.value
+                    await engine.unloadFormatter()
+                    let s = GPU.snapshot()
+                    let note = "[helper] formatter unloaded — MLX active \(s.activeMemory >> 20) MB, "
+                        + "cache \(s.cacheMemory >> 20) MB\n"
+                    FileHandle.standardError.write(Data(note.utf8))
+                }
 
             case .quit:
                 exit(0)

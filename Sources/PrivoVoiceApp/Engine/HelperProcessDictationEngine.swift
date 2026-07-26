@@ -29,9 +29,17 @@ public actor HelperProcessDictationEngine: DictationEngine {
     /// termination would clobber a freshly respawned sidecar's state (failing
     /// the new pending begin with `.crashed`, nilling the new stdin).
     private var processGeneration = 0
-    /// True from sending a `.format` until the sidecar answers (`.formatted` /
-    /// `.error`) or dies. Outlives a cooperatively-cancelled continuation so
-    /// the wedge-guard below can still tell "late but alive" from "hung".
+    /// True from sending a `.format` until its OUTCOME frame (`.formatted` /
+    /// `.error`) arrives or the sidecar dies. Deliberately outlives a
+    /// cooperatively- or hard-cancelled continuation: the sidecar's serial
+    /// loop guarantees the format's outcome frame precedes any later
+    /// request's response, so while this is set an incoming `.error` is
+    /// consumed as the format's outcome (dropped when nothing awaits it, like
+    /// a late `.formatted`) and never misrouted to a NEW session's pending
+    /// begin/end. Recovery when the outcome never comes: both cancel paths
+    /// disarm the 75 s wedge timer (`cancelPendingFormat` explicitly,
+    /// `cancel()` via `resumeFormat`), delegating a genuinely hung sidecar to
+    /// the next begin's 20 s timeout, which kills and respawns it.
     private var formatInFlight = false
     /// Which `format()` call a cooperative-cancel hop belongs to — the hop is
     /// concurrent, so without this a stale cancel could fail a LATER format's
@@ -106,9 +114,10 @@ public actor HelperProcessDictationEngine: DictationEngine {
     /// resident there). Any failure is thrown; the session layer falls back to
     /// the raw transcript. Cancellation-responsive: cancelling the calling
     /// task (the session's polish timeout) fails the wait promptly with
-    /// `CancellationError` — the sidecar itself is left alone (a late
-    /// `.formatted` is dropped by `handle(_:)`; a genuinely hung generate is
-    /// the wedge-guard timeout's job).
+    /// `CancellationError` — the sidecar itself is left alone (its late
+    /// outcome frame is consumed via `formatInFlight`; a genuinely hung
+    /// sidecar is recycled by the next begin's timeout — see
+    /// `cancelPendingFormat`).
     public func format(
         text: String, modelPath: String, options: FormatterOptions
     ) async throws -> String {
@@ -160,12 +169,17 @@ public actor HelperProcessDictationEngine: DictationEngine {
 
     /// The caller's task was cancelled (the session already fell back to the
     /// raw transcript): fail the waiting continuation, but do NOT kill the
-    /// sidecar and do NOT cancel the wedge-guard — the sidecar may be merely
-    /// slow (its late `.formatted` gets dropped), and if it is genuinely hung
-    /// the guard still recycles it at `formatTimeoutSeconds`.
+    /// sidecar — it may be merely slow, and its late outcome frame is
+    /// consumed via `formatInFlight` (see that flag's doc). The 75 s wedge
+    /// timer is disarmed too: it exists to catch a hung format while a caller
+    /// still waits; once nobody waits, letting it fire could kill a HEALTHY
+    /// sidecar much later — one that already answered and moved on, or a
+    /// respawned one busy with a new session. A genuinely hung sidecar is
+    /// instead recycled by the next begin's 20 s timeout.
     private func cancelPendingFormat(epoch: Int) {
         guard epoch == formatEpoch, let continuation = pendingFormat else { return }
         pendingFormat = nil
+        formatTimeout?.cancel(); formatTimeout = nil
         continuation.resume(throwing: CancellationError())
     }
 
@@ -247,16 +261,24 @@ public actor HelperProcessDictationEngine: DictationEngine {
         case .warmed:
             break   // warm-ups are fire-and-forget; the ack is informational
         case let .error(message):
-            // A begin-time failure (bad model) routes to the pending begin; a
-            // finalize failure to the pending end; a format failure to the
-            // pending format. At most one is in flight (the sidecar loop is
-            // serial), so route to whichever is pending.
-            if pendingBegin != nil {
+            // Route by what the serial sidecar loop must answer next. While a
+            // format's outcome is still expected — including after a
+            // cancelled continuation already resumed (see `formatInFlight`) —
+            // this error IS that outcome: consume it (a no-op resume when
+            // nothing awaits, mirroring the late-`.formatted` drop) so it can
+            // never fail a NEW session's begin/end sent behind the format.
+            // Otherwise a begin-time failure (bad model) routes to the pending
+            // begin, a finalize failure to the pending end.
+            if formatInFlight {
+                formatInFlight = false
+                resumeFormat(.failure(HelperError.engine(message)))
+            } else if pendingBegin != nil {
                 resumeBegin(.failure(HelperError.engine(message)))
             } else if pendingEnd != nil {
                 resumeEnd(.failure(HelperError.engine(message)))
             } else {
-                formatInFlight = false
+                // Nothing expected at all — a stray frame; resumeFormat is a
+                // no-op here but keeps any stale wedge timer disarmed.
                 resumeFormat(.failure(HelperError.engine(message)))
             }
         }

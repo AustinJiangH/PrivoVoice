@@ -24,6 +24,9 @@ public actor TranscriptFormatter {
     private var container: ModelContainer?
     /// Tail of the serialized generation queue — see `serialized(_:)`.
     private var queueTail: Task<Void, Never>?
+    /// Bumped each time `serialized` swaps the queue tail; lets an op that
+    /// tears the queue down (`unload`) tell whether it is still the tail.
+    private var queueGeneration = 0
     /// KV state of the most recent request's full prompt — see `generate`.
     private let prefixCache = PrefixCache()
 
@@ -46,17 +49,22 @@ public actor TranscriptFormatter {
     /// unload CAN arrive mid-load) so the model and prompt cache are never
     /// torn down mid-use; the next format reloads from scratch.
     public func unload() async {
-        _ = try? await serialized { [self] in await dropResidentState() }
+        _ = try? await serialized { [self] generation in
+            await dropResidentState(queuedAt: generation)
+        }
     }
 
     /// The synchronous teardown behind `unload()` — actor-isolated, so it can
     /// never interleave with the actor hops of a queued generation.
-    private func dropResidentState() {
+    private func dropResidentState(queuedAt generation: Int) {
         container = nil
         prefixCache.reset()
-        // Drop the queue-tail handle too: it's what can pin the last op's
-        // captures (including self) alive after the work is done.
-        queueTail = nil
+        // Drop the queue-tail handle too — it's what can pin the last op's
+        // captures (including self) alive after the work is done — but ONLY
+        // when this unload is still the tail: if anything queued behind it,
+        // nilling the tail would sever the serialization chain and let two
+        // later ops interleave.
+        if generation == queueGeneration { queueTail = nil }
         // Freed weight buffers land in MLX's reuse cache (RSS stays put);
         // clearing the cache is what actually returns them to the OS.
         GPU.clearCache()
@@ -291,7 +299,7 @@ public actor TranscriptFormatter {
     func generateWithStats(
         _ text: String, options: FormatterOptions, maxTokensLimit: Int? = nil
     ) async throws -> (output: String, stats: GenerationStats) {
-        try await serialized { [self] in
+        try await serialized { [self] _ in
             // Cancellation-responsive: don't start (or cold-load) a generation
             // whose result nobody will read — the session already fell back to
             // the raw transcript.
@@ -435,17 +443,23 @@ public actor TranscriptFormatter {
         var reused = 0
         var cache: [KVCache] = []
         let n = store.preambleTokens.count
-        if n > 0, !store.cache.isEmpty,
-           store.cache.allSatisfy(\.isTrimmable),
-           store.cache[0].offset >= n,
-           fullTokens.count > n,
-           Array(fullTokens[0..<n]) == store.preambleTokens {
+        let anchorUsable = n > 0 && !store.cache.isEmpty
+            && store.cache.allSatisfy(\.isTrimmable)
+            && store.cache[0].offset >= n
+        if !anchorUsable {
+            store.reset()   // structurally broken anchor: re-anchor on the next call
+            cache = context.model.newCache(parameters: parameters)
+        } else if fullTokens.count > n, Array(fullTokens[0..<n]) == store.preambleTokens {
             let rewind = store.cache[0].offset - n
             if rewind > 0 { for c in store.cache { _ = c.trim(rewind) } }
             reused = n
             cache = store.cache
         } else {
-            store.reset()   // stale/mismatched anchor: re-anchor on the next call
+            // Per-request seam mismatch (a transcript whose first token merges
+            // across the preamble boundary, or an over-short prompt): the
+            // anchor itself is input-independent and still valid, so full-
+            // prefill THIS request against a throwaway cache and KEEP the
+            // anchor — the next request must not pay a re-anchor for it.
             cache = context.model.newCache(parameters: parameters)
         }
 
@@ -478,19 +492,23 @@ public actor TranscriptFormatter {
     /// Run `op` after all previously queued generation work. Actor methods are
     /// reentrant at `await`s, so without this a warm-up and a format (or two
     /// formats) could interleave and fight over the prompt cache or double-load
-    /// the model container.
+    /// the model container. `op` receives the generation number of its own
+    /// queue slot so a queue-tearing op (`unload`) can tell whether anything
+    /// was queued behind it.
     ///
     /// Cancellation is forwarded into the queued (unstructured) task so a
     /// caller whose task gets cancelled — the session's polish timeout — makes
     /// `op` observe `Task.isCancelled` (checked before generation and per
     /// decoded token) instead of running to completion unobserved.
     private func serialized<T: Sendable>(
-        _ op: @escaping @Sendable () async throws -> T
+        _ op: @escaping @Sendable (_ generation: Int) async throws -> T
     ) async throws -> T {
         let previous = queueTail
+        queueGeneration += 1
+        let generation = queueGeneration
         let task = Task<T, Error> {
             await previous?.value
-            return try await op()
+            return try await op(generation)
         }
         queueTail = Task { _ = try? await task.value }
         return try await withTaskCancellationHandler {
@@ -591,6 +609,7 @@ public actor TranscriptFormatter {
         let sentences = sentenceSplit(text)
         var lines: [String] = []      // finished output lines
         var prose: [String] = []      // prose sentences accumulating on one line
+        var builtList = false
         func flushProse() {
             if !prose.isEmpty { lines.append(prose.joined(separator: " ")); prose = [] }
         }
@@ -610,18 +629,61 @@ public actor TranscriptFormatter {
                 // be prose that happens to start with ordinals — corrupting it
                 // is worse than missing it.
                 guard items.allSatisfy(Self.parsesCleanly) else { return text }
+                // Structural backstop behind the abbreviation whitelist: a run
+                // must not strand a mid-phrase fragment right after itself
+                // ("… ping Msgr." + "Kelly about it.") — see the helper.
+                if let last = items.last,
+                   isSuspiciousSplit(lastItem: last,
+                                     following: j < sentences.count ? sentences[j] : nil) {
+                    return text
+                }
                 flushProse()
                 for (k, item) in items.enumerated() {
-                    lines.append("\(k + 1). \(item.prefix(1).uppercased() + item.dropFirst())")
+                    lines.append("\(k + 1). \(sentenceCased(item))")
                 }
+                builtList = true
                 i = j
             } else {
                 prose.append(sentences[i])
                 i += 1
             }
         }
+        // No list built anywhere: return the ORIGINAL input byte-identical —
+        // the split+rejoin below would silently collapse runs of spaces.
+        guard builtList else { return text }
         flushProse()
         return lines.joined(separator: "\n")
+    }
+
+    /// Capitalize an item body's first letter for list rendering — unless the
+    /// first word already contains an uppercase letter ("iPhone", "eBay"):
+    /// prefix-uppercasing camelCase would mangle it ("IPhone setup").
+    private static func sentenceCased(_ item: String) -> String {
+        let firstWord = item.prefix(while: { !$0.isWhitespace })
+        guard !firstWord.contains(where: \.isUppercase) else { return item }
+        return item.prefix(1).uppercased() + item.dropFirst()
+    }
+
+    /// Backstop behind `parsesCleanly`'s abbreviation whitelist: a run whose
+    /// FINAL item ends in a short capitalized word ("Msgr.", "Brig.", a bare
+    /// initial "J.") while the very next sentence opens with another capital
+    /// (that isn't the pronoun "I") looks like "… ping Msgr." + "Kelly about
+    /// it." — a mid-phrase abbreviation split the whitelist didn't know, not
+    /// prose following a list. Lowercase enders ("audio.", "testing.") never
+    /// trip this, so genuine prose after a list ("All right, that didn't
+    /// work.") still renders.
+    private static func isSuspiciousSplit(lastItem: String, following: String?) -> Bool {
+        guard let following, let first = following.first, first.isUppercase else {
+            return false
+        }
+        let word = following.prefix(while: { !$0.isWhitespace })
+        if word == "I" || word.hasPrefix("I'") { return false }   // sentence-like continuation
+        guard var ender = lastItem.split(whereSeparator: { $0.isWhitespace }).last else {
+            return false
+        }
+        if ender.hasSuffix(".") { ender = ender.dropLast() }
+        guard let head = ender.first else { return false }
+        return head.isUppercase && ender.count <= 5
     }
 
     /// An item body is trustworthy iff its first word was NOT capitalized in
@@ -641,9 +703,15 @@ public actor TranscriptFormatter {
             return false   // digits/symbols: not a clause start we can vouch for
         }
         // "ask Dr." / "meet at 5 p.m. e.g." — a trailing abbreviation means the
-        // sentence split (and thus the item boundary) is wrong.
+        // sentence split (and thus the item boundary) is wrong. Breadth over
+        // precision: a false hit only downgrades a list to prose (benign),
+        // while a miss corrupts the transcript — and truly unknown capitalized
+        // abbreviations are still caught by `isSuspiciousSplit`.
         let abbreviations: Set<String> = [
             "dr", "mr", "mrs", "ms", "st", "e.g", "i.e", "etc", "inc", "vs",
+            "prof", "sgt", "rev", "ave", "jr", "sr", "no", "gen", "col",
+            "capt", "lt", "sen", "rep", "gov", "dept", "univ", "assn",
+            "bros", "co", "corp", "ltd", "mt", "ft", "approx",
         ]
         if let lastWord = body.split(whereSeparator: { $0.isWhitespace }).last {
             var token = Substring(lastWord)
@@ -700,11 +768,14 @@ public actor TranscriptFormatter {
             var body = s.dropFirst(marker.count)
             // Must be a word boundary, not e.g. "firstly" matching "first".
             if let next = body.first, next != "," , !next.isWhitespace { continue }
-            if body.first == "," { body = body.dropFirst() }
+            let hadComma = body.first == ","
+            if hadComma { body = body.dropFirst() }
             let item = body.trimmingCharacters(in: .whitespaces)
-            guard !item.isEmpty, !startsWithIdiomContinuation(item, after: marker) else {
-                return nil
-            }
+            guard !item.isEmpty else { return nil }
+            // A comma after the ordinal ("Second, hand them out …") can only
+            // be a list marker — idioms ("second hand", "first off") never
+            // carry one, so the idiom check must not veto real enumerations.
+            if !hadComma, startsWithIdiomContinuation(item, after: marker) { return nil }
             return item
         }
         return nil
@@ -743,5 +814,24 @@ public actor TranscriptFormatter {
         if input.count > 80, trimmed.count * 4 < input.count { return input }
         if trimmed.count > input.count * 3 { return input }
         return trimmed
+    }
+
+    // MARK: Test hooks (internal — FormatterSmokeTests / FormatterTests only)
+
+    /// The anchored preamble's tokens (empty when nothing is anchored).
+    func preambleTokensForTesting() -> [Int] { prefixCache.preambleTokens }
+
+    /// Corrupt the anchored preamble so the next request's prefix comparison
+    /// fails — exercises the per-request full-prefill fallback (which must
+    /// produce identical output and must NOT drop the anchor).
+    func corruptAnchorForTesting() {
+        guard !prefixCache.preambleTokens.isEmpty else { return }
+        prefixCache.preambleTokens[prefixCache.preambleTokens.count - 1] = -1
+    }
+
+    /// Run `op` through the serialized generation queue (model-free) — lets
+    /// tests observe the queue's ordering around `unload()`.
+    func enqueueSerializedForTesting(_ op: @escaping @Sendable () async -> Void) async {
+        _ = try? await serialized { _ in await op() }
     }
 }
