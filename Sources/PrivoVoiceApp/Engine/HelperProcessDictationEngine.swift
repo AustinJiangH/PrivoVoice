@@ -19,8 +19,10 @@ public actor HelperProcessDictationEngine: DictationEngine {
     private var onPartial: (@Sendable (String) -> Void)?
     private var pendingBegin: CheckedContinuation<Void, Error>?
     private var pendingEnd: CheckedContinuation<String, Error>?
+    private var pendingFormat: CheckedContinuation<String, Error>?
     private var beginTimeout: Task<Void, Never>?
     private var endTimeout: Task<Void, Never>?
+    private var formatTimeout: Task<Void, Never>?
 
     /// A begin that hasn't acknowledged (`.ready`/`.error`) in this long is
     /// treated as a hung sidecar. `.begin` only builds the transcriber (the model
@@ -28,6 +30,10 @@ public actor HelperProcessDictationEngine: DictationEngine {
     private let beginTimeoutSeconds: UInt64 = 20
     /// A finalize that doesn't return in this long is treated as a hang.
     private let endTimeoutSeconds: UInt64 = 60
+    /// A transcript format that doesn't return in this long is treated as a
+    /// hang. Longer than the caller's own fallback window (60 s) so the session
+    /// falls back to the raw transcript before the sidecar gets recycled.
+    private let formatTimeoutSeconds: UInt64 = 75
 
     public init(helperURL: URL) {
         self.helperURL = helperURL
@@ -77,6 +83,37 @@ public actor HelperProcessDictationEngine: DictationEngine {
         send(.cancel)
         resumeBegin(.failure(HelperError.cancelled))
         resumeEnd(.success(""))
+        resumeFormat(.failure(HelperError.cancelled))
+    }
+
+    /// Format the final transcript in the sidecar (the formatter LLM stays
+    /// resident there). Any failure is thrown; the session layer falls back to
+    /// the raw transcript.
+    public func format(
+        text: String, modelPath: String, options: FormatterOptions
+    ) async throws -> String {
+        try ensureRunning()
+        return try await withCheckedThrowingContinuation { continuation in
+            pendingFormat = continuation
+            send(.format(text: text, modelPath: modelPath,
+                         removesFillers: options.removesFillers,
+                         formatsLists: options.formatsLists,
+                         appliesCorrections: options.appliesCorrections))
+            let seconds = formatTimeoutSeconds
+            formatTimeout = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+                await self?.formatTimedOut()
+            }
+        }
+    }
+
+    /// A pending format didn't respond in time — fail it and kill the sidecar
+    /// (the serial request loop is wedged behind the hung generate). A late
+    /// `.formatted` after this is dropped by `handle(_:)`.
+    private func formatTimedOut() {
+        guard pendingFormat != nil else { return }
+        resumeFormat(.failure(HelperError.timeout))
+        killProcess()
     }
 
     /// A pending begin/end didn't get a response in time — fail it and kill the
@@ -131,13 +168,21 @@ public actor HelperProcessDictationEngine: DictationEngine {
             onPartial?(text)
         case let .final(text):
             resumeEnd(.success(text))
+        case let .formatted(text):
+            // No pending format (timeout/cancel already resumed it) ⇒ a late
+            // response from a recycled request — drop it.
+            resumeFormat(.success(text))
         case let .error(message):
             // A begin-time failure (bad model) routes to the pending begin; a
-            // finalize failure routes to the pending end.
+            // finalize failure to the pending end; a format failure to the
+            // pending format. At most one is in flight (the sidecar loop is
+            // serial), so route to whichever is pending.
             if pendingBegin != nil {
                 resumeBegin(.failure(HelperError.engine(message)))
-            } else {
+            } else if pendingEnd != nil {
                 resumeEnd(.failure(HelperError.engine(message)))
+            } else {
+                resumeFormat(.failure(HelperError.engine(message)))
             }
         }
     }
@@ -147,6 +192,7 @@ public actor HelperProcessDictationEngine: DictationEngine {
     private func handleTermination() {
         resumeBegin(.failure(HelperError.crashed))
         resumeEnd(.failure(HelperError.crashed))
+        resumeFormat(.failure(HelperError.crashed))
         process = nil
         stdin = nil
         onPartial = nil
@@ -175,6 +221,13 @@ public actor HelperProcessDictationEngine: DictationEngine {
         endTimeout?.cancel(); endTimeout = nil
         guard let continuation = pendingEnd else { return }
         pendingEnd = nil
+        continuation.resume(with: result)
+    }
+
+    private func resumeFormat(_ result: Result<String, Error>) {
+        formatTimeout?.cancel(); formatTimeout = nil
+        guard let continuation = pendingFormat else { return }
+        pendingFormat = nil
         continuation.resume(with: result)
     }
 

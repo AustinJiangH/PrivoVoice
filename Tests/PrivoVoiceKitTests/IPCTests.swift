@@ -18,6 +18,12 @@ final class IPCFramingTests: XCTestCase {
             .end,
             .cancel,
             .quit,
+            .format(text: "so first eggs then milk", modelPath: "/formatters/cleanup",
+                    removesFillers: true, formatsLists: true, appliesCorrections: true),
+            .format(text: "um keep the um fillers", modelPath: "/formatters/cleanup",
+                    removesFillers: false, formatsLists: true, appliesCorrections: false),
+            .format(text: "", modelPath: "",
+                    removesFillers: false, formatsLists: false, appliesCorrections: false),
         ]
         let decoded = roundTrip(requests.map { $0.encoded() }).map { EngineRequest.decode($0) }
         XCTAssertEqual(decoded, requests.map { Optional($0) })
@@ -27,6 +33,7 @@ final class IPCFramingTests: XCTestCase {
         let responses: [EngineResponse] = [
             .pong, .ready, .partial("hello wor"), .partial(""), .final("Hello, world."),
             .error("could not load model"),
+            .formatted("First: eggs. Then: milk."), .formatted(""),
         ]
         let decoded = roundTrip(responses.map { $0.encoded() }).map { EngineResponse.decode($0) }
         XCTAssertEqual(decoded, responses.map { Optional($0) })

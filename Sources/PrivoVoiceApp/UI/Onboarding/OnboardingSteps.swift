@@ -366,7 +366,136 @@ private struct OptionToggle: View {
     }
 }
 
-// MARK: - 6. Try it
+// MARK: - 6. Transcript cleanup (optional extra)
+
+struct FormattingStep: View {
+    /// Whether the user has already opted in (mirrors `settings.formatFinalTranscript`).
+    var enabled: Bool
+    /// Live install state of the cleanup model (mirrors `FormatterStore.shared.phase`).
+    var phase: FormatterStore.Phase
+    var modelName: String
+    var sizeDescription: String
+    var onEnable: () -> Void
+    var onContinue: () -> Void
+    var onBack: () -> Void
+
+    var body: some View {
+        OnboardingScaffold(
+            systemImage: "wand.and.stars",
+            title: "Want polished transcripts?",
+            subtitle: "An optional extra: a small on-device AI tidies up each dictation.",
+            primaryTitle: "Continue",
+            onPrimary: onContinue,
+            secondaryTitle: enabled ? nil : "No thanks, keep it off",
+            onSecondary: enabled ? nil : onContinue,
+            onBack: onBack
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Text(modelName)
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                    Spacer()
+                    Text(sizeDescription)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Text("Fixes punctuation, capitalization, and obvious mis-hearings — "
+                     + "all on your Mac, nothing uploaded.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                tradeoffRow(systemImage: "clock",
+                            text: "Each dictation takes noticeably longer to deliver.")
+                tradeoffRow(systemImage: "arrow.down.circle",
+                            text: "One-time \(sizeDescription) model download.")
+
+                Divider()
+
+                if enabled {
+                    enabledStatus
+                        .transition(.opacity)
+                } else {
+                    Button {
+                        onEnable()
+                    } label: {
+                        Label("Turn on & download", systemImage: "arrow.down.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(AppTheme.accent)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(.regularMaterial)
+                    .overlay(RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)))
+            .padding(.horizontal, 4)
+            .animation(.smooth, value: enabled)
+            .animation(.smooth, value: phase)
+        }
+    }
+
+    /// Live post-opt-in state: progress while downloading, the positive "ready"
+    /// treatment once installed, and a pointer to Settings on failure.
+    @ViewBuilder
+    private var enabledStatus: some View {
+        switch phase {
+        case .downloading(let fraction):
+            VStack(alignment: .leading, spacing: 6) {
+                Label("On — downloading the model", systemImage: "arrow.down.circle")
+                    .font(.system(.headline, design: .rounded))
+                    .foregroundStyle(AppTheme.accent)
+                ProgressView(value: min(max(fraction, 0), 1))
+                Text("\(Int(min(max(fraction, 0), 1) * 100))% — dictation works normally "
+                     + "in the meantime; you'll get raw transcripts until it's ready.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+        case .installed:
+            Label("On — the model is ready", systemImage: "checkmark.seal.fill")
+                .font(.system(.headline, design: .rounded))
+                .foregroundStyle(AppTheme.positive)
+
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 6) {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("You can retry the download anytime in Settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+        case .notInstalled:
+            // Opted in, download not reported yet — a beat before progress arrives.
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Starting download…").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func tradeoffRow(systemImage: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.callout)
+                .foregroundStyle(AppTheme.warning)
+                .frame(width: 20)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// MARK: - 7. Try it
 
 struct TryItStep: View {
     var phase: DictationPhase
@@ -446,6 +575,7 @@ struct TryItStep: View {
         case .idle: return "Ready when you are"
         case .listening: return "Listening…"
         case .transcribing: return "Transcribing…"
+        case .polishing: return "Polishing…"
         }
     }
 }
@@ -478,6 +608,16 @@ private struct UseCaseStepPreview: View {
         spec: ModelCatalog.spec(id: "parakeet-tdt-0.6b-v2"),
         state: .notInstalled,
         onDownload: {}, onContinue: {}, onBack: {})
+    .frame(width: 560, height: 640).padding(28)
+}
+
+#Preview("Formatting") {
+    FormattingStep(
+        enabled: false,
+        phase: .notInstalled,
+        modelName: "Transcript Polish (Qwen3 1.7B, 4-bit)",
+        sizeDescription: "~1 GB",
+        onEnable: {}, onContinue: {}, onBack: {})
     .frame(width: 560, height: 640).padding(28)
 }
 

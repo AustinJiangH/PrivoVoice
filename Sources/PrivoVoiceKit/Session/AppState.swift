@@ -12,12 +12,15 @@ public enum DictationPhase: String, Sendable, Hashable {
     case listening
     /// Key released; finalizing the transcript.
     case transcribing
+    /// Final transcript is being cleaned up by the formatter model.
+    case polishing
 
     public var label: String {
         switch self {
         case .idle: return "Idle"
         case .listening: return "Listening…"
         case .transcribing: return "Transcribing…"
+        case .polishing: return "Polishing…"
         }
     }
 

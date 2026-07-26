@@ -13,6 +13,10 @@ public actor InProcessDictationEngine: DictationEngine {
     private var startTask: Task<Void, Error>?
     private var readerTask: Task<String?, Never>?
     private var format: AVAudioFormat?
+    /// Resident transcript formatter (and the model directory it was built
+    /// for), kept warm across utterances so only the first format cold-loads.
+    private var formatter: TranscriptFormatter?
+    private var formatterPath: String?
 
     public init() {}
 
@@ -86,6 +90,16 @@ public actor InProcessDictationEngine: DictationEngine {
         await analyzer?.cancelAndFinishNow()
         readerTask?.cancel()
         cleanup()
+    }
+
+    public func format(
+        text: String, modelPath: String, options: FormatterOptions
+    ) async throws -> String {
+        if formatter == nil || formatterPath != modelPath {
+            formatter = TranscriptFormatter(directory: URL(fileURLWithPath: modelPath))
+            formatterPath = modelPath
+        }
+        return try await formatter!.format(text, options: options)
     }
 
     private func cleanup() {

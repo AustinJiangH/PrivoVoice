@@ -28,6 +28,16 @@ public final class DictationController {
     /// Delivered the final transcript when a session completes (non-empty only).
     public var onFinalTranscript: ((String) -> Void)?
 
+    /// The installed formatter model directory when the final transcript should
+    /// be polished, or `nil` to skip. Injectable so tests can exercise the
+    /// polish path without a real `FormatterStore` install.
+    var formatterModelPath: () -> String? = {
+        FormatterStore.shared.isInstalled ? FormatterStore.shared.installDirectory.path : nil
+    }
+    /// How long `stop()` waits for the formatter before falling back to the raw
+    /// transcript. Injectable for tests.
+    var formatTimeoutSeconds: Double = 60
+
     /// Everything one live session owns.
     private final class Session {
         let capture: any AudioCapturing
@@ -154,26 +164,67 @@ public final class DictationController {
 
         Task { @MainActor in
             _ = await session.run?.value          // let forwarding drain
-            let final = ((try? await engine.end()) ?? "")
+            let raw = ((try? await engine.end()) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Optionally polish the final transcript through the formatter LLM.
+            // Best-effort with a hard timeout: any failure delivers the raw
+            // transcript. The RAW text still drives telemetry below.
+            var final = raw
+            if !raw.isEmpty, settings.formatFinalTranscript,
+               let modelPath = formatterModelPath() {
+                appState.setPhase(.polishing)
+                // Capability toggles are read at format time so mid-session
+                // Settings changes apply to the very next utterance.
+                let options = FormatterOptions(
+                    removesFillers: settings.formatterRemovesFillers,
+                    formatsLists: settings.formatterFormatsLists,
+                    appliesCorrections: settings.formatterAppliesCorrections)
+                final = await Self.polished(raw, engine: engine, modelPath: modelPath,
+                                            options: options,
+                                            timeoutSeconds: formatTimeoutSeconds)
+                final = final.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
             appState.setPhase(.idle)
             appState.reset()
             finalizing = false    // now a new press may begin
             // Preserve the previous transcript on a no-speech / failed tap.
             if !final.isEmpty {
                 // Optionally prepend a separating space so consecutive dictations
-                // don't run together. The RAW `final` still drives telemetry — the
-                // separator isn't a word and must not change stats.
+                // don't run together. The RAW `raw` still drives telemetry — the
+                // separator isn't a word and formatting must not change stats.
                 let delivered = settings.autoSpacing ? Self.separated(final) : final
                 appState.commitTranscript(delivered)
                 onFinalTranscript?(delivered)
                 // Best-effort usage recording — never gates the transcript.
                 let seconds = session.sampleRate > 0
                     ? Double(session.framesFed) / session.sampleRate : 0
-                telemetry?.record(seconds: seconds, words: Self.wordCount(final),
+                telemetry?.record(seconds: seconds, words: Self.wordCount(raw),
                                   modelID: settings.selectedModelID)
             }
         }
+    }
+
+    /// Run the engine's transcript formatter, racing a timeout; the raw `text`
+    /// wins on any failure, timeout, or empty result.
+    nonisolated static func polished(
+        _ text: String, engine: any DictationEngine, modelPath: String,
+        options: FormatterOptions, timeoutSeconds: Double
+    ) async -> String {
+        let result = await withTaskGroup(of: String?.self) { group in
+            group.addTask {
+                try? await engine.format(text: text, modelPath: modelPath, options: options)
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(max(0, timeoutSeconds) * 1_000_000_000))
+                return nil
+            }
+            // First finisher wins: the formatted text, or nil on error/timeout.
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        guard let result, !result.isEmpty else { return text }
+        return result
     }
 
     /// Hard-cancel without finalizing (e.g. app quit).

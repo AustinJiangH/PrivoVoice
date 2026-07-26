@@ -82,6 +82,22 @@ struct EngineHelper {
             case .cancel:
                 await engine.cancel()
 
+            case let .format(text, modelPath, removesFillers, formatsLists, appliesCorrections):
+                // The engine keeps the formatter LLM resident across requests,
+                // so only the first format pays the model load. Serial loop:
+                // a slow format blocks later requests — acceptable for v1.
+                do {
+                    let cleaned = try await engine.format(
+                        text: text, modelPath: modelPath,
+                        options: FormatterOptions(
+                            removesFillers: removesFillers,
+                            formatsLists: formatsLists,
+                            appliesCorrections: appliesCorrections))
+                    out.send(.formatted(cleaned))
+                } catch {
+                    out.send(.error("\(error)"))
+                }
+
             case .quit:
                 exit(0)
             }

@@ -33,6 +33,9 @@ final class AppEnvironment {
         let telemetry = Telemetry(settings: settings)
         self.telemetry = telemetry
 
+        // Formatter downloads use the same optional HF token as model downloads.
+        FormatterStore.shared.tokenProvider = { [weak settings] in settings?.huggingFaceToken }
+
         // Two-process: transcription runs in the sidecar, isolated from the UI.
         let engine = HelperProcessDictationEngine(helperURL: Self.resolveHelperURL())
         self.dictation = DictationController(

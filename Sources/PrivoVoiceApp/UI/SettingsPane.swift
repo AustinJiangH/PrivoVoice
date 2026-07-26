@@ -7,6 +7,10 @@ import PrivoVoiceKit
 struct SettingsPane: View {
     @Environment(AppEnvironment.self) private var env
 
+    /// Shown when the formatting toggle is switched on without the model
+    /// installed — the ~700 MB download needs explicit consent first.
+    @State private var confirmFormatterDownload = false
+
     var body: some View {
         @Bindable var settings = env.settings
 
@@ -99,6 +103,8 @@ struct SettingsPane: View {
                     .foregroundStyle(.secondary)
             }
 
+            advancedSection
+
             Section {
                 LabeledContent("Version", value: "\(AppInfo.name) \(AppInfo.version)")
                 if let err = env.appState.lastError {
@@ -111,6 +117,104 @@ struct SettingsPane: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)   // let the panel tint show through
         .navigationTitle("Settings")
+        .alert("Download formatting model?", isPresented: $confirmFormatterDownload) {
+            Button("Download") { FormatterStore.shared.download() }
+            Button("Cancel", role: .cancel) { env.settings.formatFinalTranscript = false }
+        } message: {
+            Text("PrivoVoice will download \(FormatterStore.shared.displayName) "
+                 + "(\(FormatterStore.shared.approxSizeDescription)) from Hugging Face "
+                 + "to your Mac.")
+        }
+    }
+
+    /// The transcript-formatting section: master toggle, capability sub-toggles,
+    /// and the cleanup-model management row. Split out of `body` to keep the Form
+    /// expression type-checkable.
+    @ViewBuilder
+    private var advancedSection: some View {
+        @Bindable var settings = env.settings
+        Section("Advanced") {
+            Toggle("Format & correct transcripts", isOn: $settings.formatFinalTranscript)
+                .onChange(of: settings.formatFinalTranscript) { _, enabled in
+                    // Turning it on without the model installed asks before
+                    // downloading; Cancel reverts the toggle. Once confirmed
+                    // the toggle stays on and the core falls back to raw
+                    // transcripts until the model is ready.
+                    if enabled && !FormatterStore.shared.isInstalled {
+                        confirmFormatterDownload = true
+                    }
+                }
+            Text("Runs each finished dictation through a small on-device language "
+                 + "model that fixes punctuation, capitalization, and obvious "
+                 + "mis-hearings. Transcripts take noticeably longer to deliver "
+                 + "while this is on. Applies once the model below finishes "
+                 + "downloading — until then you get the raw transcript.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            // Capability sub-toggles — children of the master switch above.
+            Group {
+                Toggle("Remove filler words", isOn: $settings.formatterRemovesFillers)
+                Text("Drops \u{201C}um\u{201D}, \u{201C}uh\u{201D}, \u{201C}ah\u{201D}, and stutters.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Format spoken lists", isOn: $settings.formatterFormatsLists)
+                Text("Turns \u{201C}first… second… third…\u{201D} into a list.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Apply verbal corrections", isOn: $settings.formatterAppliesCorrections)
+                Text("\u{201C}Monday — no wait, Tuesday\u{201D} keeps only Tuesday.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.leading, 20)
+            .disabled(!settings.formatFinalTranscript)
+
+            formatterModelRow
+        }
+    }
+
+    /// The cleanup-model management row, driven by `FormatterStore.shared`.
+    @ViewBuilder
+    private var formatterModelRow: some View {
+        let store = FormatterStore.shared
+        LabeledContent(store.displayName) {
+            switch store.phase {
+            case .notInstalled:
+                HStack(spacing: 8) {
+                    Text(store.approxSizeDescription)
+                        .foregroundStyle(.secondary)
+                    Button("Download") { store.download() }
+                }
+
+            case .downloading(let fraction):
+                HStack(spacing: 8) {
+                    ProgressView(value: min(max(fraction, 0), 1))
+                        .frame(width: 140)
+                    Text("\(Int(min(max(fraction, 0), 1) * 100))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+            case .installed:
+                HStack(spacing: 8) {
+                    statusRow(ok: true, okText: "Installed", badText: "")
+                    Button("Remove") { store.remove() }
+                        .controlSize(.small)
+                }
+
+            case .failed(let message):
+                HStack(spacing: 8) {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.warning)
+                        .lineLimit(2)
+                    Button("Retry") { store.download() }
+                }
+            }
+        }
     }
 
     private func presetButton(_ title: String, _ combo: KeyCombo) -> some View {

@@ -42,4 +42,18 @@ public protocol DictationEngine: Sendable {
 
     /// Abort without finalizing.
     func cancel() async
+
+    /// Clean up a final transcript with the formatter model installed at
+    /// `modelPath`, applying the enabled capabilities (see
+    /// `TranscriptFormatter`). Runs wherever the engine runs, so in the
+    /// two-process app the LLM stays inside the sidecar.
+    func format(text: String, modelPath: String, options: FormatterOptions) async throws -> String
+}
+
+public extension DictationEngine {
+    /// Formatting is optional; engines (and test fakes) that don't support it
+    /// pass the transcript through unchanged.
+    func format(text: String, modelPath: String, options: FormatterOptions) async throws -> String {
+        text
+    }
 }

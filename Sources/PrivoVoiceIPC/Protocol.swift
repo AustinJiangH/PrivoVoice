@@ -21,6 +21,12 @@ public enum EngineRequest: Sendable, Equatable {
     case cancel
     /// Shut the process down.
     case quit
+    /// Clean up a final transcript with the formatter model installed at
+    /// `modelPath`; the engine replies `.formatted` (or `.error`). The three
+    /// bools mirror `FormatterOptions` (this module stays Foundation-only, so
+    /// the struct is flattened onto the wire).
+    case format(text: String, modelPath: String,
+                removesFillers: Bool, formatsLists: Bool, appliesCorrections: Bool)
 }
 
 /// Engine → UI.
@@ -34,6 +40,8 @@ public enum EngineResponse: Sendable, Equatable {
     case final(String)
     /// A user-facing error string.
     case error(String)
+    /// The cleaned-up transcript for a `.format` request.
+    case formatted(String)
 }
 
 // MARK: - Opcodes
@@ -46,23 +54,34 @@ enum Opcode {
     static let end: UInt8 = 0x04
     static let cancel: UInt8 = 0x05
     static let quit: UInt8 = 0x06
+    static let format: UInt8 = 0x07
     // Responses
     static let pong: UInt8 = 0x81
     static let ready: UInt8 = 0x82
     static let partial: UInt8 = 0x83
     static let final: UInt8 = 0x84
     static let error: UInt8 = 0x85
+    static let formatted: UInt8 = 0x86
 }
 
 // MARK: - Encoding
 
-/// JSON shape for `.begin` (the only structured request payload).
+/// JSON shape for `.begin`.
 private struct BeginPayload: Codable {
     let modelPath: String
     let backend: String
     let locale: String
     let sampleRate: Double
     let channels: Int
+}
+
+/// JSON shape for `.format`.
+private struct FormatPayload: Codable {
+    let text: String
+    let modelPath: String
+    let removesFillers: Bool
+    let formatsLists: Bool
+    let appliesCorrections: Bool
 }
 
 public extension EngineRequest {
@@ -80,6 +99,12 @@ public extension EngineRequest {
             return Frame.make(Opcode.begin, payload)
         case let .audio(samples):
             return Frame.make(Opcode.audio, samples.withUnsafeBytes { Data($0) })
+        case let .format(text, modelPath, removesFillers, formatsLists, appliesCorrections):
+            let payload = try! JSONEncoder().encode(
+                FormatPayload(text: text, modelPath: modelPath,
+                              removesFillers: removesFillers, formatsLists: formatsLists,
+                              appliesCorrections: appliesCorrections))
+            return Frame.make(Opcode.format, payload)
         }
     }
 
@@ -96,6 +121,11 @@ public extension EngineRequest {
                           sampleRate: p.sampleRate, channels: p.channels)
         case Opcode.audio:
             return .audio(frame.payload.toFloatArray())
+        case Opcode.format:
+            guard let p = try? JSONDecoder().decode(FormatPayload.self, from: frame.payload) else { return nil }
+            return .format(text: p.text, modelPath: p.modelPath,
+                           removesFillers: p.removesFillers, formatsLists: p.formatsLists,
+                           appliesCorrections: p.appliesCorrections)
         default:
             return nil
         }
@@ -110,6 +140,7 @@ public extension EngineResponse {
         case let .partial(t): return Frame.make(Opcode.partial, Data(t.utf8))
         case let .final(t):   return Frame.make(Opcode.final, Data(t.utf8))
         case let .error(t):   return Frame.make(Opcode.error, Data(t.utf8))
+        case let .formatted(t): return Frame.make(Opcode.formatted, Data(t.utf8))
         }
     }
 
@@ -120,6 +151,7 @@ public extension EngineResponse {
         case Opcode.partial: return .partial(String(decoding: frame.payload, as: UTF8.self))
         case Opcode.final:   return .final(String(decoding: frame.payload, as: UTF8.self))
         case Opcode.error:   return .error(String(decoding: frame.payload, as: UTF8.self))
+        case Opcode.formatted: return .formatted(String(decoding: frame.payload, as: UTF8.self))
         default: return nil
         }
     }

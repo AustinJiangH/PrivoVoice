@@ -10,7 +10,7 @@ import PrivoVoiceKit
 
 /// The ordered steps of the first-run flow. `allCases` order == screen order.
 enum OnboardingStep: Int, CaseIterable {
-    case welcome, useCase, model, hotkey, options, tryIt
+    case welcome, useCase, model, hotkey, options, formatting, tryIt
 }
 
 struct OnboardingView: View {
@@ -115,6 +115,21 @@ struct OnboardingView: View {
             OptionsStep(
                 autoCopy: $settings.autoCopy,
                 showLiveTranscription: $settings.showLiveTranscription,
+                onContinue: advance,
+                onBack: back)
+
+        case .formatting:
+            FormattingStep(
+                enabled: settings.formatFinalTranscript,
+                phase: FormatterStore.shared.phase,
+                modelName: FormatterStore.shared.displayName,
+                sizeDescription: FormatterStore.shared.approxSizeDescription,
+                onEnable: {
+                    // Opt in and start the download in the background; onboarding
+                    // keeps moving and Settings has the full management UI.
+                    env.settings.formatFinalTranscript = true
+                    FormatterStore.shared.download()
+                },
                 onContinue: advance,
                 onBack: back)
 
