@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/site/assets/logo.svg" alt="PrivoVoice logo — a bird over a shield" width="96" height="96">
+<img src="docs/assets/logo.svg" alt="PrivoVoice logo — a bird over a shield" width="96" height="96">
 
 # PrivoVoice
 
@@ -157,8 +157,8 @@ other change.
 
 ## 🌐 Website
 
-The marketing site lives in this repo at [`public/site/`](public/site/) —
-a single static page (plus [`llms.txt`](public/site/llms.txt) for AI crawlers)
+The marketing site lives in this repo at [`docs/`](docs/) —
+a single static page (plus [`llms.txt`](docs/llms.txt) for AI crawlers)
 served via GitHub Pages.
 
 ## 🌱 Built on Voixful
