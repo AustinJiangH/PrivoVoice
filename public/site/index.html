@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PrivoVoice — You talk. We write.</title>
+<meta name="description" content="PrivoVoice is free, private, on-device push-to-talk dictation for macOS. Hold a key, speak, release — it types anywhere your cursor is. Nothing ever leaves your Mac.">
+
+<!-- Tailwind via CDN (only external dependency; scroll reveals are hand-rolled) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'media',
+  theme: {
+    extend: {
+      colors: {
+        flame:   '#FE5D26',  /* brand accent / CTA — unchanged */
+        clay:    '#C9772E',  /* muted amber — secondary accent */
+        cream:   '#EAEAEC',  /* light text / surfaces on dark */
+        tea:     '#A1A1AA',  /* neutral cool gray — labels */
+        emerald: '#2FA36B',  /* professional green — success */
+        mist:    '#F5F5F7',  /* clean light-gray page background */
+        panel:   '#FFFFFF',  /* white panels */
+        ink:     '#0B0B0D',  /* near-black base */
+        coal:    '#17171A'   /* dark panels */
+      },
+      fontFamily: {
+        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif']
+      },
+      boxShadow: {
+        warm: '0 20px 50px -12px rgba(11, 11, 13, 0.20), 0 8px 24px -8px rgba(11, 11, 13, 0.12)',
+        card: '0 12px 40px -10px rgba(11, 11, 13, 0.16)'
+      }
+    }
+  }
+}
+</script>
+
+<style>
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+  body { overflow-x: hidden; }
+
+  /* ---------- scroll reveal (hand-rolled IntersectionObserver) ---------- */
+  .rv { opacity: 0; transform: translateY(22px); transition: opacity .7s ease, transform .7s ease; }
+  .rv.rv-in { opacity: 1; transform: none; }
+  .rv-d1 { transition-delay: .12s; } .rv-d2 { transition-delay: .24s; } .rv-d3 { transition-delay: .36s; }
+  @media (prefers-reduced-motion: reduce) {
+    .rv { opacity: 1 !important; transform: none !important; transition: none !important; }
+  }
+
+  /* ---------- auto-polish demo ---------- */
+  .tok {
+    display: inline-block; white-space: pre-wrap; vertical-align: baseline;
+    opacity: 0; transform: translateY(5px);
+    transition: opacity .18s ease, transform .18s ease, background-color .4s ease, color .4s ease;
+    border-radius: .35rem;
+  }
+  .tok.on { opacity: 1; transform: none; }
+  .tok.zap {
+    color: #c2492a; text-decoration: line-through; text-decoration-thickness: 2px;
+    background-color: rgba(254, 93, 38, .14);
+  }
+  @media (prefers-color-scheme: dark) { .tok.zap { color: #ff9d77; } }
+  .tok.fix {
+    background-color: rgba(242, 192, 120, .35);
+  }
+  .tok.keep {
+    background-color: rgba(126, 188, 137, .30); font-weight: 600;
+  }
+  .tok.gone {
+    max-width: 0 !important; opacity: 0; overflow: hidden;
+    padding: 0; margin: 0;
+    transition: max-width .5s cubic-bezier(.4, 0, .2, 1), opacity .3s ease;
+  }
+
+  .enum-line { opacity: 0; transform: translateY(10px); transition: opacity .45s ease, transform .45s ease; }
+  .enum-line.on { opacity: 1; transform: none; }
+
+  #polishStatus .dot { animation: pv-pulse 1.1s ease-in-out infinite; }
+  @keyframes pv-pulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+
+  .fade-swap { transition: opacity .4s ease; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tok, .enum-line, .fade-swap { transition: none !important; }
+    #polishStatus .dot { animation: none; }
+  }
+</style>
+</head>
+
+<body class="bg-mist text-ink dark:bg-ink dark:text-cream/90 font-sans antialiased selection:bg-flame/20 selection:text-ink">
+
+<!-- ======================= NAV ======================= -->
+<header class="sticky top-0 z-50 backdrop-blur-md bg-mist/80 dark:bg-ink/80 border-b border-ink/5 dark:border-cream/10">
+  <nav class="mx-auto max-w-6xl px-4 sm:px-6 h-16 flex items-center justify-between" aria-label="Main">
+    <a href="#top" class="flex items-center gap-2.5 font-bold text-lg tracking-tight">
+      <!-- TODO: replace with real logo (drop the file at assets/logo.png — this slot picks it up automatically) -->
+      <img src="assets/logo.png" alt="PrivoVoice logo" width="36" height="36" class="h-9 w-9 rounded-xl object-cover"
+           onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+      <span style="display:none" aria-hidden="true"
+            class="h-9 w-9 rounded-xl bg-gradient-to-br from-flame to-clay text-white items-center justify-center font-black text-lg shadow-warm">P</span>
+      <span>Privo<span class="text-flame">Voice</span></span>
+    </a>
+    <div class="hidden md:flex items-center gap-6 text-sm font-medium text-ink/70 dark:text-cream/70">
+      <a href="#features"  class="hover:text-flame transition-colors">Features</a>
+      <a href="#polish"    class="hover:text-flame transition-colors">Auto-Polish</a>
+      <a href="#privacy"   class="hover:text-flame transition-colors">Privacy</a>
+      <a href="#dashboard" class="hover:text-flame transition-colors">Dashboard</a>
+      <a href="#pricing"   class="hover:text-flame transition-colors">Pricing</a>
+    </div>
+    <!-- TODO: point at GitHub Releases latest -->
+    <a href="#" class="inline-flex items-center gap-2 rounded-full bg-flame px-4 py-2 text-sm font-semibold text-white shadow-warm hover:bg-flame/90 active:scale-95 transition">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55l3.3-3.3 1.4 1.42L12 16.4l-4.7-4.73 1.4-1.42 3.3 3.3V3h2zM5 19h14v2H5v-2z"/></svg>
+      Download
+    </a>
+  </nav>
+</header>
+
+<!-- ======================= HERO ======================= -->
+<main id="top">
+<section class="relative overflow-hidden">
+  <!-- subtle background wash -->
+  <div class="pointer-events-none absolute inset-0" aria-hidden="true">
+    <div class="absolute -top-32 -left-32 h-96 w-96 rounded-full bg-flame/10 blur-3xl opacity-60 dark:opacity-15"></div>
+    <div class="absolute top-40 -right-40 h-[28rem] w-[28rem] rounded-full bg-ink/5 blur-3xl dark:bg-cream/5"></div>
+  </div>
+
+  <div class="relative mx-auto max-w-7xl px-4 sm:px-6 pt-16 pb-20 lg:pt-24 lg:pb-28 grid lg:grid-cols-[1fr_1.35fr] gap-14 items-center">
+    <div class="rv">
+      <p class="inline-flex items-center gap-2 rounded-full bg-tea/50 dark:bg-emerald/20 px-3 py-1 text-xs font-semibold text-ink/70 dark:text-tea tracking-wide uppercase">
+        <span class="h-2 w-2 rounded-full bg-emerald"></span> 100% on-device dictation
+      </p>
+      <h1 class="mt-5 text-5xl sm:text-6xl font-black tracking-tight leading-[1.05]">
+        You talk.<br>We <span class="text-flame">write.</span>
+      </h1>
+      <p class="mt-5 text-xl sm:text-2xl font-medium text-ink/70 dark:text-cream/70">
+        …and your privacy is <span class="underline decoration-emerald decoration-4 underline-offset-4">guaranteed</span>.
+      </p>
+      <p class="mt-4 max-w-md text-ink/60 dark:text-cream/60">
+        Hold a key, speak, release — PrivoVoice types it into any app, right at your cursor.
+        Every word is transcribed on your Mac, never in the cloud.
+      </p>
+      <div class="mt-8 flex flex-col items-start gap-2">
+        <!-- TODO: point at GitHub Releases latest -->
+        <a href="#" class="inline-flex items-center gap-3 rounded-2xl bg-flame px-7 py-4 text-lg font-bold text-white shadow-warm hover:bg-flame/90 hover:-translate-y-0.5 active:scale-95 transition">
+          <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.7 12.9c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.9-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3.1 2.4 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.6-1-2.7-3.8zM16.2 5.5c.7-.8 1.1-2 1-3.1-1 0-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3 1.1.1 2.2-.6 2.9-1.4z"/></svg>
+          Download for macOS
+        </a>
+        <p class="text-sm text-ink/50 dark:text-cream/50 pl-1">Free · macOS 27+ · Apple Silicon</p>
+      </div>
+    </div>
+
+    <!-- Hero demo video: live HUD transcribing into Apple Notes -->
+    <div class="rv rv-d1 relative">
+      <figure class="relative rounded-3xl bg-panel dark:bg-coal p-2.5 shadow-warm ring-1 ring-ink/5 dark:ring-cream/10">
+        <video class="w-full rounded-2xl" autoplay muted playsinline preload="metadata"
+               poster="assets/hero-poster.jpg" aria-label="Screen recording of PrivoVoice live-transcribing speech into Apple Notes">
+          <source src="assets/hero-demo.mp4" type="video/mp4">
+        </video>
+        <figcaption class="px-3 py-2.5 text-sm text-ink/55 dark:text-cream/55">
+          The floating HUD shows your words live — release the key and they land in Notes.
+        </figcaption>
+      </figure>
+      <div class="absolute -bottom-5 -left-3 sm:-left-8 rounded-2xl bg-panel dark:bg-coal shadow-card ring-1 ring-ink/5 dark:ring-cream/10 px-4 py-3 flex items-center gap-3">
+        <span class="h-2.5 w-2.5 rounded-full bg-emerald"></span>
+        <span class="text-sm font-semibold">Hold <kbd class="rounded-md bg-mist dark:bg-ink px-1.5 py-0.5 text-xs font-bold ring-1 ring-ink/10 dark:ring-cream/20">any key</kbd> · speak · release</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= FEATURES ======================= -->
+<section id="features" class="relative py-20 lg:py-28">
+  <div class="mx-auto max-w-6xl px-4 sm:px-6">
+    <div class="rv max-w-2xl">
+      <h2 class="text-3xl sm:text-4xl font-black tracking-tight">Dictation that keeps up with you</h2>
+      <p class="mt-3 text-lg text-ink/60 dark:text-cream/60">Push-to-talk anywhere on your Mac — email, docs, chat, code. No per-app setup, no switching windows.</p>
+    </div>
+
+    <div class="mt-12 grid md:grid-cols-3 gap-6">
+      <div class="rv rounded-3xl bg-panel dark:bg-coal p-7 shadow-card ring-1 ring-ink/5 dark:ring-cream/10">
+        <div class="h-12 w-12 rounded-2xl bg-flame/10 flex items-center justify-center text-flame" aria-hidden="true"><svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9v6M8 5v14M12 8v8M16 4v16M20 10v4"/></svg></div>
+        <h3 class="mt-5 text-xl font-bold">Live transcription HUD</h3>
+        <p class="mt-2 text-ink/60 dark:text-cream/60">Watch your words appear in a floating heads-up display <em>while</em> you speak — release the key and the text drops in at your cursor.</p>
+      </div>
+      <div class="rv rv-d1 rounded-3xl bg-panel dark:bg-coal p-7 shadow-card ring-1 ring-ink/5 dark:ring-cream/10">
+        <div class="h-12 w-12 rounded-2xl bg-flame/10 flex items-center justify-center text-flame" aria-hidden="true"><svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></div>
+        <h3 class="mt-5 text-xl font-bold">Your choice of model</h3>
+        <p class="mt-2 text-ink/60 dark:text-cream/60">Pick from 0.6B to 2.5B speech models — smallest-and-fastest to best-punctuation. Each card shows speed, accuracy, and size; download in one click.</p>
+      </div>
+      <div class="rv rv-d2 rounded-3xl bg-panel dark:bg-coal p-7 shadow-card ring-1 ring-ink/5 dark:ring-cream/10">
+        <div class="h-12 w-12 rounded-2xl bg-flame/10 flex items-center justify-center text-flame" aria-hidden="true"><svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.7 3.9 5.9 3.9 9s-1.3 6.3-3.9 9c-2.6-2.7-3.9-5.9-3.9-9S9.4 5.7 12 3z"/></svg></div>
+        <h3 class="mt-5 text-xl font-bold">Speaks your language</h3>
+        <p class="mt-2 text-ink/60 dark:text-cream/60">Multilingual models cover 25+ languages — English, German, French, Spanish, Italian, Portuguese, Polish, Ukrainian, and more.</p>
+      </div>
+    </div>
+
+    <!-- Models screenshot: the in-app model picker with language chips and accuracy badges -->
+    <figure class="rv mt-12 mx-auto max-w-4xl rounded-3xl bg-panel dark:bg-coal p-2.5 shadow-warm ring-1 ring-ink/5 dark:ring-cream/10">
+      <img src="assets/models.png" alt="PrivoVoice Models tab showing downloadable speech models with speed, accuracy, size, and language badges" class="w-full rounded-2xl" loading="lazy">
+      <figcaption class="px-3 py-2.5 text-sm text-ink/55 dark:text-cream/55">
+        The Models tab — compare speed, accuracy, and languages at a glance, then download the one that fits.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ======================= AUTO-POLISH (showpiece) ======================= -->
+<section id="polish" class="relative py-20 lg:py-28 bg-cream/60 dark:bg-coal/40">
+  <div class="mx-auto max-w-6xl px-4 sm:px-6">
+    <div class="rv max-w-2xl">
+      <p class="text-sm font-bold uppercase tracking-widest text-flame">Auto-polish</p>
+      <h2 class="mt-2 text-3xl sm:text-4xl font-black tracking-tight">Speak like a human.<br>Read like an editor.</h2>
+      <p class="mt-3 text-lg text-ink/60 dark:text-cream/60">
+        An optional on-device language model tidies each dictation the moment you finish — no cloud, about a fifth of a second.
+      </p>
+    </div>
+
+    <!-- Animated demo: typewriter → filler strike-out → self-correction collapse → list reflow. Loops; static before/after when prefers-reduced-motion. -->
+    <div class="rv mt-12 mx-auto max-w-3xl">
+      <div class="rounded-3xl bg-panel dark:bg-coal shadow-warm ring-1 ring-ink/5 dark:ring-cream/10 overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-3.5 border-b border-ink/5 dark:border-cream/10">
+          <div class="flex items-center gap-2" aria-hidden="true">
+            <span class="h-3 w-3 rounded-full bg-flame/70"></span>
+            <span class="h-3 w-3 rounded-full bg-clay"></span>
+            <span class="h-3 w-3 rounded-full bg-emerald"></span>
+          </div>
+          <div id="polishStatus" class="flex items-center gap-2 rounded-full bg-mist dark:bg-ink px-3 py-1 text-xs font-semibold text-ink/70 dark:text-cream/70">
+            <span class="dot h-2 w-2 rounded-full bg-emerald"></span><span id="polishStatusText">Listening…</span>
+          </div>
+        </div>
+        <div id="polishBody" class="fade-swap px-6 sm:px-8 py-7 sm:py-8 text-lg sm:text-xl leading-relaxed min-h-[15rem] sm:min-h-[14rem]">
+          <p id="lineA"></p>
+          <div id="lineB" class="mt-3">
+            <p id="enumRaw"></p>
+            <div id="enumList" class="hidden">
+              <p class="enum-line">We need three things:</p>
+              <ol class="mt-1 space-y-1">
+                <li class="enum-line flex gap-2"><span class="font-bold text-flame">1.</span> The slides</li>
+                <li class="enum-line flex gap-2"><span class="font-bold text-flame">2.</span> The demo</li>
+                <li class="enum-line flex gap-2"><span class="font-bold text-flame">3.</span> The pricing sheet</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-6 flex flex-wrap justify-center gap-3 text-sm font-semibold">
+        <span class="rv inline-flex items-center gap-2 rounded-full bg-panel dark:bg-coal px-4 py-2 shadow-card ring-1 ring-ink/5 dark:ring-cream/10"><svg class="w-4 h-4 text-flame" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.5 15.5M14.5 12.5L20 20M8.5 8.5L11 11"/></svg> Filler words removed</span>
+        <span class="rv rv-d1 inline-flex items-center gap-2 rounded-full bg-panel dark:bg-coal px-4 py-2 shadow-card ring-1 ring-ink/5 dark:ring-cream/10"><svg class="w-4 h-4 text-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></svg> Self-corrections applied</span>
+        <span class="rv rv-d2 inline-flex items-center gap-2 rounded-full bg-panel dark:bg-coal px-4 py-2 shadow-card ring-1 ring-ink/5 dark:ring-cream/10"><svg class="w-4 h-4 text-clay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg> Spoken lists formatted</span>
+      </div>
+    </div>
+
+    <!-- Settings screenshot: polish toggles -->
+    <div class="rv mt-16 grid lg:grid-cols-2 gap-10 items-center">
+      <figure class="rounded-3xl bg-panel dark:bg-coal p-2.5 shadow-warm ring-1 ring-ink/5 dark:ring-cream/10">
+        <img src="assets/settings-polish.png" alt="PrivoVoice Settings showing the Format &amp; correct transcripts toggles: remove filler words, format spoken lists, apply verbal corrections" class="w-full rounded-2xl" loading="lazy">
+        <figcaption class="px-3 py-2.5 text-sm text-ink/55 dark:text-cream/55">
+          Every polish behavior is a toggle — turn on only what you want. Off by default.
+        </figcaption>
+      </figure>
+      <div>
+        <h3 class="text-2xl font-bold tracking-tight">Polish is yours to tune</h3>
+        <ul class="mt-5 space-y-4 text-ink/70 dark:text-cream/70">
+          <li class="flex gap-3"><span class="mt-1 text-emerald" aria-hidden="true">✓</span><span><strong>Remove filler words</strong> — drops “um”, “uh”, “ah”, and stutters.</span></li>
+          <li class="flex gap-3"><span class="mt-1 text-emerald" aria-hidden="true">✓</span><span><strong>Apply verbal corrections</strong> — “Monday — no wait, Tuesday” keeps only Tuesday.</span></li>
+          <li class="flex gap-3"><span class="mt-1 text-emerald" aria-hidden="true">✓</span><span><strong>Format spoken lists</strong> — “first… second… third…” becomes a real numbered list.</span></li>
+          <li class="flex gap-3"><span class="mt-1 text-emerald" aria-hidden="true">✓</span><span><strong>Fully local</strong> — a compact on-device LLM (~1&nbsp;GB, opt-in download) does the editing. About 0.1–0.35&nbsp;s per dictation once warm.</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= PRIVACY ======================= -->
+<section id="privacy" class="relative py-20 lg:py-28">
+  <div class="mx-auto max-w-6xl px-4 sm:px-6">
+    <div class="rv rounded-[2rem] bg-ink dark:bg-coal text-cream shadow-warm overflow-hidden">
+      <div class="relative px-6 sm:px-12 py-14 sm:py-16">
+        <div class="pointer-events-none absolute -top-24 -right-24 h-80 w-80 rounded-full bg-emerald/20 blur-3xl" aria-hidden="true"></div>
+        <div class="max-w-2xl">
+          <p class="text-sm font-bold uppercase tracking-widest text-tea">Privacy</p>
+          <h2 class="mt-2 text-3xl sm:text-4xl font-black tracking-tight">Your voice never leaves your Mac.</h2>
+          <p class="mt-4 text-lg text-cream/70">
+            Capture, transcription, and polish all happen on your Apple Silicon chip.
+            Nothing is ever sent to a remote server — there is no server.
+          </p>
+        </div>
+        <div class="mt-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          <div class="rv rounded-2xl bg-cream/5 ring-1 ring-cream/10 p-5">
+            <div class="text-tea" aria-hidden="true"><svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 18a4 4 0 0 0 .3-7.98A6 6 0 0 0 7 8.5"/><path d="M6.5 18A4.5 4.5 0 0 1 5 9.3"/><path d="M3 3l18 18"/></svg></div>
+            <h3 class="mt-3 font-bold">No cloud, ever</h3>
+            <p class="mt-1.5 text-sm text-cream/60">Models run locally. Audio and text stay on-device — even the polish LLM.</p>
+          </div>
+          <div class="rv rv-d1 rounded-2xl bg-cream/5 ring-1 ring-cream/10 p-5">
+            <div class="text-tea" aria-hidden="true"><svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21a7 7 0 0 0-11-5.7"/><circle cx="11" cy="8" r="4"/><path d="M3 3l18 18"/></svg></div>
+            <h3 class="mt-3 font-bold">No account</h3>
+            <p class="mt-1.5 text-sm text-cream/60">No sign-up, no login, no telemetry, no analytics. Download and dictate.</p>
+          </div>
+          <div class="rv rv-d2 rounded-2xl bg-cream/5 ring-1 ring-cream/10 p-5">
+            <div class="text-tea" aria-hidden="true"><svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 8.4-7 10-4-1.6-7-5.6-7-10V6l7-3z"/><path d="M9.2 11.8l2 2 3.6-3.8"/></svg></div>
+            <h3 class="mt-3 font-bold">Two permissions only</h3>
+            <p class="mt-1.5 text-sm text-cream/60">Microphone to hear you, Accessibility to type for you. No Input Monitoring, ever.</p>
+          </div>
+          <div class="rv rv-d3 rounded-2xl bg-cream/5 ring-1 ring-cream/10 p-5">
+            <div class="text-tea" aria-hidden="true"><svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M8.5 16.4a5 5 0 0 1 6.9-.3"/><path d="M5 12.9a10 10 0 0 1 3.3-2.1"/><path d="M19.1 12.9a10 10 0 0 0-6-2.8"/><path d="M2 9a15 15 0 0 1 4.5-2.6"/><path d="M22 9a15 15 0 0 0-8.5-3"/><path d="M12 20h.01"/></svg></div>
+            <h3 class="mt-3 font-bold">Works offline</h3>
+            <p class="mt-1.5 text-sm text-cream/60">Once a model is downloaded, dictation works with Wi-Fi off. Try it.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= DASHBOARD ======================= -->
+<section id="dashboard" class="relative py-20 lg:py-28 bg-cream/60 dark:bg-coal/40">
+  <div class="mx-auto max-w-6xl px-4 sm:px-6 grid lg:grid-cols-2 gap-12 items-center">
+    <div class="rv order-2 lg:order-1">
+      <p class="text-sm font-bold uppercase tracking-widest text-flame">Dashboard</p>
+      <h2 class="mt-2 text-3xl sm:text-4xl font-black tracking-tight">Your dictation, measured</h2>
+      <p class="mt-4 text-lg text-ink/60 dark:text-cream/60">
+        Minutes spoken, words typed, streaks and trends — a clear view of how much you
+        dictate over time, and how it changes week to week.
+      </p>
+      <div class="mt-7 grid grid-cols-2 gap-4 max-w-md">
+        <div class="rounded-2xl bg-panel dark:bg-coal p-4 shadow-card ring-1 ring-ink/5 dark:ring-cream/10">
+          <p class="text-2xl font-black text-flame">51m</p>
+          <p class="text-sm text-ink/55 dark:text-cream/55">dictated this week</p>
+        </div>
+        <div class="rounded-2xl bg-panel dark:bg-coal p-4 shadow-card ring-1 ring-ink/5 dark:ring-cream/10">
+          <p class="text-2xl font-black text-emerald">7,256</p>
+          <p class="text-sm text-ink/55 dark:text-cream/55">words — all typed by voice</p>
+        </div>
+      </div>
+      <p class="mt-4 text-sm text-ink/45 dark:text-cream/45">All stats are computed and stored locally, like everything else.</p>
+    </div>
+    <!-- Dashboard screenshot: playful usage stats -->
+    <figure class="rv rv-d1 order-1 lg:order-2 rounded-3xl bg-panel dark:bg-coal p-2.5 shadow-warm ring-1 ring-ink/5 dark:ring-cream/10">
+      <img src="assets/dashboard.png" alt="PrivoVoice Dashboard showing playful usage stats: 2.3× a sitcom episode of dictation, 50m 59s dictated, 7,256 words" class="w-full rounded-2xl" loading="lazy">
+      <figcaption class="px-3 py-2.5 text-sm text-ink/55 dark:text-cream/55">
+        The Dashboard tab — how much you’ve spoken, words typed, and your trends over time.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ======================= PRICING ======================= -->
+<section id="pricing" class="relative py-20 lg:py-28">
+  <div class="mx-auto max-w-3xl px-4 sm:px-6 text-center">
+    <div class="rv">
+      <p class="text-sm font-bold uppercase tracking-widest text-flame">Pricing</p>
+      <h2 class="mt-2 text-3xl sm:text-4xl font-black tracking-tight">Completely free.</h2>
+      <p class="mt-3 text-lg text-ink/60 dark:text-cream/60">Not “free trial”. Not “free tier”. Just free.</p>
+    </div>
+    <div class="rv rv-d1 mt-10 rounded-[2rem] bg-panel dark:bg-coal p-8 sm:p-12 shadow-warm ring-1 ring-ink/5 dark:ring-cream/10">
+      <!-- TODO: replace with real app icon (drop the file at assets/icon.png — this slot picks it up automatically) -->
+      <img src="assets/icon.png" alt="PrivoVoice app icon" width="72" height="72" class="mx-auto h-18 w-18 rounded-[1.25rem] object-cover" style="height:4.5rem;width:4.5rem"
+           onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+      <span style="display:none;height:4.5rem;width:4.5rem" aria-hidden="true"
+            class="mx-auto rounded-[1.25rem] bg-gradient-to-br from-flame via-clay to-emerald text-white items-center justify-center font-black text-3xl shadow-warm">P</span>
+      <p class="mt-6 text-6xl font-black tracking-tight">$0</p>
+      <p class="mt-1 text-ink/50 dark:text-cream/50 font-medium">forever</p>
+      <ul class="mt-8 grid sm:grid-cols-2 gap-3 text-left max-w-lg mx-auto text-ink/70 dark:text-cream/70">
+        <li class="flex gap-2.5"><span class="text-emerald" aria-hidden="true">✓</span> Every model, every language</li>
+        <li class="flex gap-2.5"><span class="text-emerald" aria-hidden="true">✓</span> Auto-polish included</li>
+        <li class="flex gap-2.5"><span class="text-emerald" aria-hidden="true">✓</span> No subscription, no account</li>
+        <li class="flex gap-2.5"><span class="text-emerald" aria-hidden="true">✓</span> No usage limits</li>
+      </ul>
+      <div class="mt-10 flex flex-col items-center gap-2">
+        <!-- TODO: point at GitHub Releases latest -->
+        <a href="#" class="inline-flex items-center gap-3 rounded-2xl bg-flame px-8 py-4 text-lg font-bold text-white shadow-warm hover:bg-flame/90 hover:-translate-y-0.5 active:scale-95 transition">
+          <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.7 12.9c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.9-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3.1 2.4 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.6-1-2.7-3.8zM16.2 5.5c.7-.8 1.1-2 1-3.1-1 0-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3 1.1.1 2.2-.6 2.9-1.4z"/></svg>
+          Download for macOS
+        </a>
+        <p class="text-sm text-ink/50 dark:text-cream/50">Free · macOS 27+ · Apple Silicon</p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- ======================= FOOTER ======================= -->
+<footer class="border-t border-ink/5 dark:border-cream/10 bg-mist dark:bg-ink">
+  <div class="mx-auto max-w-6xl px-4 sm:px-6 py-10 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-ink/55 dark:text-cream/55">
+    <p class="flex items-center gap-2">
+      <span class="inline-flex h-6 w-6 rounded-lg bg-gradient-to-br from-flame to-clay text-white items-center justify-center font-black text-xs" aria-hidden="true">P</span>
+      <span>© 2026 PrivoVoice · Made for the Mac</span>
+    </p>
+    <p>
+      Questions? <a href="mailto:austin.jiang.hub@gmail.com" class="font-semibold text-flame hover:underline">austin.jiang.hub@gmail.com</a>
+    </p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+  var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  /* ---------------- scroll reveal ---------------- */
+  var revealEls = document.querySelectorAll('.rv');
+  if (!reduceMotion.matches && 'IntersectionObserver' in window) {
+    var ro = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('rv-in'); ro.unobserve(e.target); }
+      });
+    }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+    revealEls.forEach(function (el) { ro.observe(el); });
+  } else {
+    revealEls.forEach(function (el) { el.classList.add('rv-in'); });
+  }
+
+  /* ---------------- reduced motion: tame the hero video ---------------- */
+  var heroVideo = document.querySelector('video');
+  if (heroVideo && reduceMotion.matches) {
+    heroVideo.removeAttribute('autoplay');
+    heroVideo.removeAttribute('loop');
+    heroVideo.setAttribute('controls', '');
+    heroVideo.pause();
+  } else if (heroVideo) {
+    // Play the demo faster so it feels snappy; re-assert the rate on the events
+    // that can reset it (source load / (re)play).
+    var HERO_RATE = 2.5;
+    var applyRate = function () { heroVideo.playbackRate = HERO_RATE; };
+    applyRate();
+    heroVideo.addEventListener('loadedmetadata', applyRate);
+    heroVideo.addEventListener('play', applyRate);
+    // Hold on the final frame for 2s, then restart (replaces the `loop` attr).
+    heroVideo.addEventListener('ended', function () {
+      setTimeout(function () { heroVideo.currentTime = 0; heroVideo.play(); }, 2000);
+    });
+  }
+
+  /* ---------------- auto-polish demo ---------------- */
+  // Token flags: f = filler (struck + removed), c = correction (struck + removed),
+  // k = the word the correction keeps (highlighted green).
+  var LINE_A = [
+    { t: 'So ' }, { t: 'um, ', f: 1 }, { t: 'we ' }, { t: 'should ' }, { t: 'uh… ', f: 1 },
+    { t: 'meet ' }, { t: 'on ' },
+    { t: 'Monday ', c: 1 }, { t: '— ', c: 1 }, { t: 'no ', c: 1 }, { t: 'wait, ', c: 1 },
+    { t: 'Tuesday ', k: 1 }, { t: 'at ' }, { t: 'ten.' }
+  ];
+  var LINE_B = [
+    { t: 'And ' }, { t: 'um, ', f: 1 }, { t: 'we ' }, { t: 'need ' }, { t: 'three ' }, { t: 'things: ' },
+    { t: 'first ' }, { t: 'the ' }, { t: 'slides, ' }, { t: 'second ' }, { t: 'the ' }, { t: 'demo, ' },
+    { t: 'and ' }, { t: 'third ' }, { t: 'the ' }, { t: 'pricing ' }, { t: 'sheet.' }
+  ];
+
+  var lineA = document.getElementById('lineA');
+  var enumRaw = document.getElementById('enumRaw');
+  var enumList = document.getElementById('enumList');
+  var body = document.getElementById('polishBody');
+  var statusText = document.getElementById('polishStatusText');
+  var statusChip = document.getElementById('polishStatus');
+  var statusDot = statusChip.querySelector('.dot');
+
+  function buildTokens(container, spec) {
+    container.textContent = '';
+    return spec.map(function (w) {
+      var s = document.createElement('span');
+      s.className = 'tok';
+      s.textContent = w.t;
+      if (w.f) s.dataset.f = '1';
+      if (w.c) s.dataset.c = '1';
+      if (w.k) s.dataset.k = '1';
+      container.appendChild(s);
+      return s;
+    });
+  }
+
+  function setStatus(text, color) {
+    statusText.textContent = text;
+    statusDot.className = 'dot h-2 w-2 rounded-full ' + color;
+  }
+
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  // Collapse a token: freeze its width, then transition max-width -> 0.
+  function collapse(tok) {
+    tok.style.maxWidth = tok.offsetWidth + 'px';
+    tok.offsetWidth; // force reflow so the transition starts from the frozen width
+    tok.classList.add('gone');
+  }
+
+  var demoVisible = false;
+  var running = false;
+
+  function renderStatic() {
+    // Reduced-motion fallback: one readable frame — fillers/corrections struck through,
+    // the spoken enumeration already formatted as a list.
+    var toks = buildTokens(lineA, LINE_A);
+    toks.forEach(function (s) {
+      s.classList.add('on');
+      if (s.dataset.f || s.dataset.c) s.classList.add('zap');
+      if (s.dataset.k) s.classList.add('keep');
+    });
+    enumRaw.classList.add('hidden');
+    enumList.classList.remove('hidden');
+    enumList.querySelectorAll('.enum-line').forEach(function (el) { el.classList.add('on'); });
+    setStatus('Polished · on-device', 'bg-emerald');
+  }
+
+  async function waitVisible() {
+    while (!demoVisible) { await sleep(250); }
+  }
+
+  async function typeTokens(toks) {
+    for (var i = 0; i < toks.length; i++) {
+      toks[i].classList.add('on');
+      await sleep(75 + Math.random() * 90);
+    }
+  }
+
+  async function runLoop() {
+    if (running) return;
+    running = true;
+    while (true) {
+      if (reduceMotion.matches) { renderStatic(); running = false; return; }
+      await waitVisible();
+
+      // -- reset --
+      body.style.opacity = '1';
+      enumList.classList.add('hidden');
+      enumList.querySelectorAll('.enum-line').forEach(function (el) { el.classList.remove('on'); });
+      enumRaw.classList.remove('hidden');
+      enumRaw.style.opacity = '1';
+      var toksA = buildTokens(lineA, LINE_A);
+      var toksB = buildTokens(enumRaw, LINE_B);
+      var all = toksA.concat(toksB);
+
+      // 1. "dictation" arrives word by word, like live partials
+      setStatus('Listening…', 'bg-emerald');
+      await typeTokens(all);
+      await sleep(700);
+
+      // 2. polish kicks in
+      setStatus('Polishing on-device…', 'bg-clay');
+      await sleep(600);
+
+      // 2a. filler words: strike, then collapse away
+      all.forEach(function (s) { if (s.dataset.f) s.classList.add('zap'); });
+      await sleep(900);
+      all.forEach(function (s) { if (s.dataset.f) collapse(s); });
+      await sleep(800);
+
+      // 2b. self-correction: highlight the false start, keep the fix
+      all.forEach(function (s) {
+        if (s.dataset.c) s.classList.add('fix');
+        if (s.dataset.k) s.classList.add('keep');
+      });
+      await sleep(1000);
+      all.forEach(function (s) { if (s.dataset.c) { s.classList.add('zap'); collapse(s); } });
+      await sleep(900);
+
+      // 2c. spoken enumeration reflows into a numbered list
+      enumRaw.style.transition = 'opacity .35s ease';
+      enumRaw.style.opacity = '0';
+      await sleep(380);
+      enumRaw.classList.add('hidden');
+      enumList.classList.remove('hidden');
+      var lines = enumList.querySelectorAll('.enum-line');
+      for (var i = 0; i < lines.length; i++) {
+        lines[i].classList.add('on');
+        await sleep(220);
+      }
+
+      // 3. done — settle, then fade out and loop
+      await sleep(400);
+      var kept = all.filter(function (s) { return s.dataset.k; });
+      kept.forEach(function (s) { s.classList.remove('keep'); });
+      setStatus('Polished ✓ pasted at your cursor', 'bg-emerald');
+      await sleep(3400);
+      body.style.opacity = '0';
+      await sleep(450);
+    }
+  }
+
+  if ('IntersectionObserver' in window) {
+    var po = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { demoVisible = e.isIntersecting; });
+      if (demoVisible) runLoop();
+    }, { threshold: 0.25 });
+    po.observe(document.getElementById('polishBody'));
+  } else {
+    demoVisible = true;
+    runLoop();
+  }
+  if (reduceMotion.matches) renderStatic();
+  reduceMotion.addEventListener && reduceMotion.addEventListener('change', function () {
+    if (reduceMotion.matches) renderStatic();
+    else runLoop();
+  });
+})();
+</script>
+</body>
+</html>
