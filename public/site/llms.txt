@@ -1,0 +1,22 @@
+# PrivoVoice
+
+> Free, private, on-device push-to-talk dictation for macOS (Apple Silicon, macOS 27+). Hold a hotkey, speak, release — the transcript is typed at your cursor in any app. All processing happens locally; audio and text never leave the Mac. No account, no telemetry by default.
+
+## What it does
+
+- Push-to-talk dictation into any macOS app (pastes at the cursor; needs only Microphone + Accessibility permissions — never Input Monitoring).
+- Live transcription shown in a floating HUD while you speak.
+- Choice of on-device speech models (0.6B–2.5B parameters) covering multiple languages, downloadable in-app and organized by use case.
+- Optional "transcript polish" (off by default): an on-device LLM (Qwen3 1.7B, 4-bit) fixes punctuation and mis-hearings, removes filler words (um, uh), applies spoken self-corrections ("Monday — no wait, Tuesday" keeps only Tuesday), and formats spoken enumerations as numbered lists. Each capability has its own toggle.
+- Local usage dashboard: dictation time, word counts, playful equivalents, and charts by day / time of day / model.
+
+## Key facts
+
+- Price: completely free.
+- Privacy: 100% offline speech recognition and polishing; nothing is sent to any server.
+- Platform: macOS 27.0+, Apple Silicon.
+- Contact: austin.jiang.hub@gmail.com
+
+## Links
+
+- Download and releases: see the Download button on the homepage (GitHub Releases).
