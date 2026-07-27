@@ -48,6 +48,19 @@ jobs:
             exit 1
           fi
 
+      # Since Xcode 26 the Metal compiler ships as a separate downloadable
+      # component that runner images don't preinstall — without it, mlx-swift's
+      # shader compilation fails ("CompileMetalFile … failed"). ~5 min, cached
+      # for the job only.
+      - name: Install Metal toolchain
+        run: |
+          if ! xcrun -f metal >/dev/null 2>&1 || ! echo 'kernel void k(){}' | xcrun metal -x metal -c - -o /dev/null 2>/dev/null; then
+            echo "Metal toolchain missing or non-functional — downloading component…"
+            xcodebuild -downloadComponent MetalToolchain
+          else
+            echo "Metal toolchain already functional."
+          fi
+
       # ── Future: Developer ID signing + notarization (needs repo secrets) ──
       # make-dmg.sh auto-detects a "Developer ID Application" identity and the
       # NOTARY_* env vars, so once the secrets exist this setup step (plus the
