@@ -73,6 +73,25 @@ shows speed, accuracy, size, and language support at a glance:
 > for live partials. Whisper models have a hard 30 s single-pass window — longer
 > dictations are segmented automatically on silence.
 
+## 📦 Install
+
+```bash
+brew install --cask austinjiangh/tap/privovoice
+```
+
+> **Tip:** add `--no-quarantine` to skip macOS's first-open Gatekeeper prompt —
+> the app is open source but not yet notarized by Apple.
+
+Or download the DMG from [Releases](https://github.com/AustinJiangH/PrivoVoice/releases/latest),
+drag **PrivoVoice** to Applications, then right-click → **Open** the first time —
+or unblock it once from the terminal:
+
+```bash
+xattr -d com.apple.quarantine /Applications/PrivoVoice.app
+```
+
+Either way, onboarding greets you on first launch.
+
 ## 🚀 Quick start
 
 > PrivoVoice is built on the [Voixful](https://github.com/AustinJiangH/voixful) speech
@@ -101,6 +120,30 @@ open build/PrivoVoice.app
 
 Then follow the onboarding: pick a use case, download the recommended model,
 grant the two permissions below, and **hold `fn`** (or your favorite key) to dictate.
+
+## 📦 Distribute
+
+```bash
+./scripts/make-dmg.sh         # → dist/PrivoVoice-<version>.dmg
+```
+
+Builds a drag-and-drop DMG (app + Applications shortcut, volume icon included).
+The script auto-picks the best signing tier it finds:
+
+- **Developer ID Application** identity in your keychain → everything is
+  re-signed with the hardened runtime + timestamp and the DMG itself is signed.
+  If notarization credentials exist — a notarytool keychain profile (set up once
+  with `xcrun notarytool store-credentials privovoice`; override the name via
+  `NOTARY_PROFILE`) or `NOTARY_KEY`/`NOTARY_KEY_ID`/`NOTARY_ISSUER` env vars —
+  the DMG is also notarized and stapled, so it opens cleanly on any Mac.
+- **Otherwise** → the dev/ad-hoc signature from `make-app.sh` is kept: fine for
+  your own machines, but recipients must right-click the app → **Open** once.
+
+Pushing a `v*` tag runs the same script on CI
+([release workflow](.github/workflows/release.yml)) and attaches the DMG to the
+GitHub release automatically. CI has no signing identity yet, so those DMGs are
+ad-hoc signed (right-click → Open caveat applies) — a locally built Developer ID
+DMG is the better artifact until signing secrets are configured.
 
 ## 🔒 Permissions
 

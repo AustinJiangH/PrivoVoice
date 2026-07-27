@@ -1,0 +1,109 @@
+# Release — build the drag-and-drop DMG and attach it to the GitHub release.
+#
+#   • Tag push (v*): test → make-dmg.sh → upload workflow artifact → attach the
+#     DMG to the release for that tag (created on the fly if missing).
+#   • workflow_dispatch: same build, artifact upload only — the release step is
+#     skipped entirely, so manual runs never fail for lack of a release.
+#
+# Signing caveat: GitHub runners have no signing identities, so make-app.sh
+# falls back to ad-hoc signing. The DMG installs fine, but recipients must
+# right-click PrivoVoice.app → Open the first time (Gatekeeper). Until the
+# Developer ID secrets below are wired up, a locally built DMG
+# (./scripts/make-dmg.sh with a Developer ID identity) is the better artifact.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # attach the DMG to the release on tag builds
+
+jobs:
+  dmg:
+    # Package.swift requires the macOS 27 SDK → Xcode 27. GitHub's macos-latest
+    # (= macos-26) still ships Xcode 26.x only; the `xcode-27` public-preview
+    # image is currently the only hosted image with Xcode 27. Switch back to
+    # macos-latest once it carries Xcode 27 (the SDK-check step below will tell
+    # you if the image is wrong).
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain info
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Verify macOS 27 SDK
+        run: |
+          SDK="$(xcrun --sdk macosx --show-sdk-version)"
+          echo "macOS SDK: $SDK"
+          if [ "${SDK%%.*}" -lt 27 ]; then
+            echo "::error::Package.swift targets macOS 27 but this image's newest SDK is $SDK. Pick a runner image with Xcode 27+ (see runs-on comment)."
+            exit 1
+          fi
+
+      # ── Future: Developer ID signing + notarization (needs repo secrets) ──
+      # make-dmg.sh auto-detects a "Developer ID Application" identity and the
+      # NOTARY_* env vars, so once the secrets exist this setup step (plus the
+      # env block on "Build DMG") is all the workflow needs.
+      #
+      # - name: Import Developer ID certificate
+      #   env:
+      #     DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }} # base64-encoded .p12
+      #     P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+      #   run: |
+      #     KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+      #     security create-keychain -p ci "$KEYCHAIN"
+      #     security set-keychain-settings -lut 21600 "$KEYCHAIN"
+      #     security unlock-keychain -p ci "$KEYCHAIN"
+      #     echo "$DEVELOPER_ID_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+      #     security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+      #       -P "$P12_PASSWORD" -T /usr/bin/codesign
+      #     security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KEYCHAIN"
+      #     security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+      #     echo "NOTARY_KEY=$RUNNER_TEMP/notary-key.p8" >> "$GITHUB_ENV"
+      #     printf '%s' "${{ secrets.NOTARY_KEY_P8 }}" > "$RUNNER_TEMP/notary-key.p8"
+
+      - name: Tests
+        run: |
+          # Test binaries inherit the macOS 27 deployment target; the xcode-27
+          # preview image still BOOTS macOS 26.x, which cannot execute them.
+          # Compile the whole package including tests as the gate, and only run
+          # them when the host OS is new enough.
+          HOST="$(sw_vers -productVersion)"
+          if [ "${HOST%%.*}" -ge 27 ]; then
+            swift test
+          else
+            echo "Host macOS $HOST < 27 — building tests without executing them."
+            swift build --build-tests
+          fi
+
+      - name: Build DMG
+        # env: # ← uncomment with the signing step above to notarize on CI
+        #   NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+        #   NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: ./scripts/make-dmg.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrivoVoice-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+      - name: Attach DMG to release
+        if: github.ref_type == 'tag'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create the release for this tag if it doesn't exist yet, then
+          # attach (or replace) the DMG.
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/*.dmg --clobber
