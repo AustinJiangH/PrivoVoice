@@ -73,6 +73,11 @@ let package = Package(
         .executableTarget(
             name: "PrivoVoiceApp",
             dependencies: ["PrivoVoiceKit", "PrivoVoiceIPC"],
+            // Brand assets (menu-bar template logo). `.copy` keeps the SVG
+            // byte-for-byte; NSImage loads SVG natively on modern macOS.
+            resources: [
+                .copy("Resources/MenuBarLogo.svg")
+            ],
             // Embed an Info.plist so macOS TCC grants REAL microphone audio (a
             // bare SwiftPM binary is otherwise fed silence) and the process runs
             // as a menu-bar accessory. Same linker trick the root CLI uses.
