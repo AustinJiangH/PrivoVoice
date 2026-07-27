@@ -19,7 +19,7 @@
 
 ## Links
 
-- Website: https://austinjiangh.github.io/PrivoVoice/
+- Website: https://privovoice.com/
 - Source code (Apache-2.0): https://github.com/AustinJiangH/PrivoVoice
 - Download: https://github.com/AustinJiangH/PrivoVoice/releases/latest
 - Speech engine (also open source): https://github.com/AustinJiangH/voixful

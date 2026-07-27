@@ -9,7 +9,7 @@
 **Hold your favorite key · speak · release** — it's typed wherever your cursor is.
 …and your privacy is guaranteed: every word is transcribed on your Mac, never in the cloud.
 
-**[🌐 Website](https://austinjiangh.github.io/PrivoVoice/)** · **[⬇️ Download](https://github.com/AustinJiangH/PrivoVoice/releases/latest)**
+**[🌐 Website](https://privovoice.com/)** · **[⬇️ Download](https://github.com/AustinJiangH/PrivoVoice/releases/latest)**
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Platform: macOS 27+](https://img.shields.io/badge/macOS-27%2B-black?logo=apple&logoColor=white)](#-quick-start)
@@ -202,7 +202,7 @@ other change.
 
 ## 🌐 Website
 
-**[austinjiangh.github.io/PrivoVoice](https://austinjiangh.github.io/PrivoVoice/)** —
+**[austinjiangh.github.io/PrivoVoice](https://privovoice.com/)** —
 the marketing site lives in this repo at [`docs/`](docs/), a single static page
 (plus [`llms.txt`](docs/llms.txt) for AI crawlers) served via GitHub Pages.
 
