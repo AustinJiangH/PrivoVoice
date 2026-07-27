@@ -37,6 +37,14 @@ flowchart LR
 
 *Nothing leaves your Mac — capture, transcription, polish, and paste all happen on-device.*
 
+<div align="center">
+
+<img src="docs/assets/hero-demo.gif" alt="PrivoVoice live-transcribing into Apple Notes while the hotkey is held" width="720">
+
+*Live: hold the key, watch the HUD transcribe, release — the text lands in Notes.*
+
+</div>
+
 ## ✨ Why PrivoVoice
 
 - 🔒 **Truly private** — audio and text are processed locally and never leave the device. No network calls, no telemetry, no analytics. Works with Wi-Fi off.
