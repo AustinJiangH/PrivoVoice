@@ -73,11 +73,12 @@ shows speed, accuracy, size, and language support at a glance:
 
 ## 🚀 Quick start
 
-> **Prerequisite:** PrivoVoice is built on the [Voixful](https://github.com/AustinJiangH/voixful)
-> speech engine, referenced as a sibling package (`../voixful`). Clone both next to each other:
+> PrivoVoice is built on the [Voixful](https://github.com/AustinJiangH/voixful) speech
+> engine, fetched automatically as a pinned SwiftPM dependency — no extra setup.
+> (Hacking on the engine itself? `swift package edit Voixful --path ../voixful`
+> points the build at a local checkout.)
 
 ```bash
-git clone https://github.com/AustinJiangH/voixful.git
 git clone https://github.com/AustinJiangH/PrivoVoice.git
 cd PrivoVoice
 ```

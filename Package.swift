@@ -29,9 +29,10 @@ let package = Package(
         .executable(name: "PrivoVoiceHelper", targets: ["PrivoVoiceHelper"]),
     ],
     dependencies: [
-        // The Voixful engine package lives alongside this one (../voixful). Local path keeps the app in
-        // lock-step with the engine it dogfoods.
-        .package(path: "../voixful"),
+        // The Voixful engine — the open-source speech package this app dogfoods.
+        // Pinned to a release tag; for lock-step engine development, override
+        // with the sibling checkout: `swift package edit Voixful --path ../voixful`.
+        .package(url: "https://github.com/AustinJiangH/voixful.git", from: "0.1.0"),
         // MLX inference for the optional transcript-formatter LLM (MLXLLM/MLXLMCommon).
         .package(url: "https://github.com/ml-explore/mlx-swift-examples", from: "2.29.1"),
         // Hugging Face Hub downloads + tokenizers for the formatter model. Pinned
