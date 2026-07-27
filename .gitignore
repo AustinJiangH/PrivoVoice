@@ -3,3 +3,4 @@ build/
 *.aimodel
 .DS_Store
 .swiftpm/
+composed.svg
