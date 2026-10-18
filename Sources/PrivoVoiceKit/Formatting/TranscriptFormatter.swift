@@ -67,7 +67,7 @@ public actor TranscriptFormatter {
         if generation == queueGeneration { queueTail = nil }
         // Freed weight buffers land in MLX's reuse cache (RSS stays put);
         // clearing the cache is what actually returns them to the OS.
-        GPU.clearCache()
+        Memory.clearCache()
     }
 
     /// The KV (attention) state of the fixed prompt preamble (system prompt +
@@ -329,7 +329,7 @@ public actor TranscriptFormatter {
                 parameters.temperature = 0
                 // Larger prefill windows shave a little off a cold (uncached)
                 // preamble prefill; the whole prompt then runs in one window.
-                parameters.prefillStepSize = 1024
+                parameters.prefill.stepSize = 1024
                 // Cleanup is roughly length-preserving; cap generation so a runaway
                 // model can't loop forever. (Rough input size via the tokenizer —
                 // the chat template only adds a fixed preamble. The +256 headroom
@@ -379,7 +379,7 @@ public actor TranscriptFormatter {
     /// two different one-character user turns and taking the shared prefix —
     /// robust against chat-template details (BOS handling, generation header)
     /// without re-implementing the template. The preamble is then prefilled on
-    /// its own, in fixed `prefillStepSize` chunks, so its KV values never
+    /// its own, in fixed `prefill.stepSize` chunks, so its KV values never
     /// depend on any particular request. ~0.3 s, paid once per options change
     /// (or at `prewarm`), not per format.
     private static func buildAnchor(
@@ -400,8 +400,8 @@ public actor TranscriptFormatter {
         guard n > 0 else { return }   // template renders nothing stable — skip caching
 
         let preamble = Array(a[0..<n])
-        let cache = context.model.newCache(parameters: parameters)
-        let step = max(256, parameters.prefillStepSize)
+        let cache = try context.model.newCache(parameters: parameters)
+        let step = max(256, parameters.prefill.stepSize ?? 0)
         var pos = 0
         while pos < preamble.count {
             let end = min(pos + step, preamble.count)
@@ -448,7 +448,7 @@ public actor TranscriptFormatter {
             && store.cache[0].offset >= n
         if !anchorUsable {
             store.reset()   // structurally broken anchor: re-anchor on the next call
-            cache = context.model.newCache(parameters: parameters)
+            cache = try context.model.newCache(parameters: parameters)
         } else if fullTokens.count > n, Array(fullTokens[0..<n]) == store.preambleTokens {
             let rewind = store.cache[0].offset - n
             if rewind > 0 { for c in store.cache { _ = c.trim(rewind) } }
@@ -460,7 +460,7 @@ public actor TranscriptFormatter {
             // anchor itself is input-independent and still valid, so full-
             // prefill THIS request against a throwaway cache and KEEP the
             // anchor — the next request must not pay a re-anchor for it.
-            cache = context.model.newCache(parameters: parameters)
+            cache = try context.model.newCache(parameters: parameters)
         }
 
         let suffixInput = LMInput(tokens: MLXArray(Array(fullTokens[reused...])))
@@ -523,7 +523,7 @@ public actor TranscriptFormatter {
     private func loadedContainer() async throws -> ModelContainer {
         if let container { return container }
         let loaded = try await LLMModelFactory.shared.loadContainer(
-            configuration: ModelConfiguration(directory: directory))
+            from: directory, using: TransformersTokenizerLoader())
         container = loaded
         return loaded
     }

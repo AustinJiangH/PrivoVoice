@@ -138,7 +138,7 @@ struct EngineHelper {
                 residencyTask = Task { [previous = residencyTask] in
                     await previous?.value
                     await engine.unloadFormatter()
-                    let s = GPU.snapshot()
+                    let s = Memory.snapshot()
                     let note = "[helper] formatter unloaded — MLX active \(s.activeMemory >> 20) MB, "
                         + "cache \(s.cacheMemory >> 20) MB\n"
                     FileHandle.standardError.write(Data(note.utf8))

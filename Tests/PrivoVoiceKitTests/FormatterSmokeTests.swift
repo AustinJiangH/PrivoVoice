@@ -198,17 +198,17 @@ final class FormatterSmokeTests: XCTestCase {
 
     /// `unloadFormatter` must actually hand the ~1 GB of weights back — both
     /// the live arrays (container drop) and MLX's buffer reuse cache
-    /// (`GPU.clearCache()`).
+    /// (`Memory.clearCache()`).
     func testUnloadFreesFormatterMemory() async throws {
         let directory = try await requireSmokeModel()
 
         let engine = InProcessDictationEngine()
         await engine.warmFormatter(modelPath: directory.path, options: FormatterOptions())
-        let before = GPU.snapshot()
+        let before = Memory.snapshot()
         XCTAssertGreaterThan(before.activeMemory, 500 << 20,
                              "the model should be resident after a warm-up")
         await engine.unloadFormatter()
-        let after = GPU.snapshot()
+        let after = Memory.snapshot()
         print("SMOKE[unload] MLX active \(before.activeMemory >> 20) MB -> "
               + "\(after.activeMemory >> 20) MB, cache \(after.cacheMemory >> 20) MB")
         XCTAssertLessThan(after.activeMemory, 200 << 20,

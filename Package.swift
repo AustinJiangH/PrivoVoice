@@ -32,12 +32,14 @@ let package = Package(
         // The Voixful engine — the open-source speech package this app dogfoods.
         // Pinned to a release tag; for lock-step engine development, override
         // with the sibling checkout: `swift package edit Voixful --path ../voixful`.
-        .package(url: "https://github.com/AustinJiangH/voixful.git", from: "0.1.0"),
+        .package(url: "https://github.com/AustinJiangH/voixful.git", from: "0.2.0"),
         // MLX inference for the optional transcript-formatter LLM (MLXLLM/MLXLMCommon).
-        .package(url: "https://github.com/ml-explore/mlx-swift-examples", from: "2.29.1"),
-        // Hugging Face Hub downloads + tokenizers for the formatter model. Pinned
-        // to the same minor mlx-swift-examples uses so resolution stays coherent.
-        .package(url: "https://github.com/huggingface/swift-transformers", .upToNextMinor(from: "1.0.0")),
+        // 3.x is the successor of mlx-swift-examples' LLM libraries; it no longer
+        // bundles a tokenizer, so the formatter adapts swift-transformers' own
+        // (see `TransformersTokenizerLoader`). Minor-pinned: 3.x minors may break.
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMinor(from: "3.32.3")),
+        // Hugging Face Hub downloads + tokenizers for the formatter model.
+        .package(url: "https://github.com/huggingface/swift-transformers", .upToNextMinor(from: "1.3.5")),
     ],
     targets: [
         // MARK: Cross-process wire protocol (Foundation-only, both processes share)
@@ -53,12 +55,13 @@ let package = Package(
                 .product(name: "VoixfulParakeetTDT", package: "Voixful"),
                 .product(name: "VoixfulCohereTranscribe", package: "Voixful"),
                 .product(name: "VoixfulGraniteNAR", package: "Voixful"),
+                .product(name: "VoixfulGraniteTurboCTC", package: "Voixful"),
                 .product(name: "VoixfulCanaryQwen", package: "Voixful"),
                 .product(name: "VoixfulWhisper", package: "Voixful"),
                 .product(name: "VoixfulFullContext", package: "Voixful"),
                 // Optional final-transcript formatter (small on-device LLM).
-                .product(name: "MLXLLM", package: "mlx-swift-examples"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-examples"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "Hub", package: "swift-transformers"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ]
