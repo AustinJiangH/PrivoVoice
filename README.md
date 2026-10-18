@@ -51,7 +51,7 @@ flowchart LR
 - ⌨️ **Works everywhere** — pastes into any app at the cursor; no per-app integration.
 - ⚡ **Push-to-talk** — hold to talk, release to type. Your trigger key is *consumed*, so it never types while you dictate.
 - 📺 **Live HUD** — a floating heads-up display shows the transcription *while* you speak.
-- 🧠 **Your choice of model** — nine on-device models from a 0.6 B streaming model (lowest latency) to 2.5 B (best punctuation), covering 25+ languages. Download in-app; the Models tab organizes them by use case.
+- 🧠 **Your choice of model** — ten on-device models from a 0.6 B streaming model (lowest latency) to 2.5 B (best punctuation), covering 25+ languages. Download in-app; the Models tab organizes them by use case.
 - ✍️ **Optional auto-polish** — an on-device LLM (Qwen3 1.7B, MLX 4-bit, ~1 GB opt-in download) fixes punctuation and mis-hearings, strips filler words, applies spoken self-corrections ("Monday — no wait, Tuesday" keeps only Tuesday), and formats spoken enumerations as numbered lists. Each behavior is its own toggle, all **off by default**; adds ~0.1–0.35 s per dictation once warm.
 - 📊 **Dashboard** — minutes spoken, words typed, playful equivalents ("2.3× a sitcom episode"), and charts by day, hour, and model. Computed and stored locally, like everything else.
 - 🚀 **Guided onboarding** — pick what you'll use it for, get a model recommendation, choose your talk key, grant permissions. Dictating in minutes.
@@ -71,7 +71,8 @@ shows speed, accuracy, size, and language support at a glance:
 | [Parakeet TDT v2](https://huggingface.co/AustinJiangH/voixful-parakeet-tdt-0.6b-v2) | English | 0.6 B · ~335 MB | CC-BY-4.0 | Smallest and fastest, best English accuracy of the small tier |
 | [Parakeet TDT v3](https://huggingface.co/AustinJiangH/voixful-parakeet-tdt-0.6b-v3) | 25 European languages | 0.6 B · ~370 MB | CC-BY-4.0 | Multilingual, still fast |
 | [Granite Speech NAR](https://huggingface.co/AustinJiangH/voixful-granite-speech-4.1-2b-nar) | en · fr · de · es · pt | 2.2 B · ~1.1 GB | Apache-2.0 | The most accurate overall |
-| [Canary-Qwen](https://huggingface.co/AustinJiangH/voixful-canary-qwen-2.5b) | English | 2.5 B · ~2.4 GB | CC-BY-4.0 | Best punctuation and casing |
+| [Granite TurboCTC](https://huggingface.co/AustinJiangH/voixful-granite-speech-5.0-470m-turboctc) | English | 0.47 B · ~260 MB | Apache-2.0 | Near-best accuracy at Parakeet size and speed — lowercase, no punctuation (pair with auto-polish) |
+| [Canary-Qwen](https://huggingface.co/AustinJiangH/voixful-canary-qwen-2.5b) | English | 2.5 B · ~3.7 GB | CC-BY-4.0 | Best punctuation and casing |
 | [Whisper Small](https://huggingface.co/AustinJiangH/voixful-whisper-small) | English | 0.24 B · ~630 MB | MIT | Compact Whisper at a modest footprint |
 | [Whisper Medium](https://huggingface.co/AustinJiangH/voixful-whisper-medium) | English | 0.77 B · ~1.9 GB | MIT | Better English accuracy than Small |
 | [Whisper Large v3 Turbo](https://huggingface.co/AustinJiangH/voixful-whisper-large-v3-turbo) | English | 0.81 B · ~970 MB | MIT | Near-large accuracy with a lighter, faster decoder |

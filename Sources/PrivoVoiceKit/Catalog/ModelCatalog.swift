@@ -181,6 +181,24 @@ public enum ModelCatalog {
             summary: "Best accuracy we ship; strong live + file balance. No decode loop.",
             download: .huggingFace(repo: "\(hfOrg)/voixful-granite-speech-4.1-2b-nar", revision: "main")
         ),
+        ModelSpec(
+            id: "granite-speech-5.0-470m-turboctc",
+            displayName: "Granite TurboCTC",
+            backend: .turboctc,
+            upstreamRepo: "ibm-granite/granite-speech-5.0-470m-turboctc",
+            assetName: "granite-speech-5.0-470m-turboctc-palette4.aimodel",
+            parameters: "0.47 B",
+            approxSizeMB: 260,   // measured Palette4 .aimodel on disk
+            languages: [LanguageTag("en")],
+            streaming: false,
+            speed: .excellent,
+            accuracy: .excellent,
+            weightsLicense: "Apache-2.0",
+            werLeaderboard: 5.00,
+            maxAudioSeconds: 30,   // largest exported window (~30.7 s); longer audio is segmented
+            summary: "Near-best accuracy at Parakeet size — lowercase, no punctuation (pair with auto-polish).",
+            download: .huggingFace(repo: "\(hfOrg)/voixful-granite-speech-5.0-470m-turboctc", revision: "main")
+        ),
         // Cohere Transcribe is intentionally NOT listed: the upstream checkpoint
         // is access-gated by CohereLabs, so we don't redistribute it. The engine
         // backend still exists in the core for locally-imported assets.
@@ -191,7 +209,7 @@ public enum ModelCatalog {
             upstreamRepo: "nvidia/canary-qwen-2.5b",
             assetName: "canary-qwen-2.5b-palette4.aimodel",
             parameters: "2.5 B",
-            approxSizeMB: 2400,   // measured Palette4 .aimodel on disk
+            approxSizeMB: 3680,   // measured Palette4 .aimodel on disk (fp16-KV release build)
             languages: [LanguageTag("en")],
             streaming: false,
             speed: .fair,

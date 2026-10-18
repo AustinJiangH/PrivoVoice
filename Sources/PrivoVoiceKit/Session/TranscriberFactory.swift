@@ -10,6 +10,7 @@ import VoixfulNemotronStreaming
 import VoixfulParakeetTDT
 import VoixfulCohereTranscribe
 import VoixfulGraniteNAR
+import VoixfulGraniteTurboCTC
 import VoixfulCanaryQwen
 import VoixfulWhisper
 import VoixfulFullContext
@@ -49,6 +50,9 @@ public enum TranscriberFactory {
                 modelURL: modelURL, piecesURL: pieces, locale: locale)
         case .granite:
             return LiveFullContextTranscriber<GraniteNAREngine>(
+                modelURL: modelURL, piecesURL: pieces, locale: locale)
+        case .turboctc:
+            return LiveFullContextTranscriber<TurboCTCEngine>(
                 modelURL: modelURL, piecesURL: pieces, locale: locale)
         case .canary:
             return LiveFullContextTranscriber<CanaryQwenEngine>(
