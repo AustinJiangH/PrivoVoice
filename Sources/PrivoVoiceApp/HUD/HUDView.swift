@@ -1,14 +1,18 @@
-// The floating HUD, redesigned in Liquid Glass.
+// The floating HUD as a notch "island".
 //
-// Two stacked glass panes:
-//   • a status capsule with a circular countdown "lens" (time remaining until the
-//     current model's single-pass limit), an amplitude meter, and a live label —
-//     the lens turns RED with a warning under 10s left, and flashes a "N min"
-//     reminder at each minute mark. Streaming models (no limit) show a count-up
-//     with an indeterminate spinner instead.
-//   • a larger box below that animates the live transcript as it forms.
-// A subtle shimmer sweeps both panes while active. No hard limit is imposed —
-// past the model's window we keep recording and flag that it will be segmented.
+// A solid black shape that grows out of the camera notch (Dynamic Island
+// style) when dictation starts and shrinks back into it when it ends:
+//   • a top row flanking the camera housing — amplitude meter on the left,
+//     elapsed time on the right (a pulsing dots indicator + label while the
+//     transcript is finalized/polished). The timer turns amber/red as the
+//     current model's single-pass limit approaches/passes.
+//   • below it, the island expands downward to show the live transcript once
+//     words arrive (opt-out in Settings), plus a transient note near/over the
+//     limit or at each minute mark.
+// Solid black — not Liquid Glass — so it merges with the physical notch and the
+// text renders as plain, crisply antialiased glyphs: text drawn inside a glass
+// effect is composited through the glass layer and looked rough. On a screen
+// without a notch the island hangs from the top edge the same way.
 
 import SwiftUI
 import PrivoVoiceKit
@@ -16,148 +20,206 @@ import PrivoVoiceKit
 struct HUDView: View {
     @Bindable var appState: AppState
     @Bindable var settings: AppSettings
+    @Bindable var presentation: HUDPresentation
 
     var body: some View {
-        GlassEffectContainer(spacing: 12) {
-            VStack(spacing: 12) {
-                StatusCapsule(appState: appState)
-                // The live transcript is opt-out (Settings → "Show live
-                // transcription"). Off ⇒ just the small amplitude + timer pill.
-                if settings.showLiveTranscription {
-                    TranscriptBox(appState: appState)
-                }
-            }
-        }
-        .padding(14)
-        // Fixed width, height driven by content (the transcript box grows with
-        // its line count). Top-anchored in the panel's transparent canvas so the
-        // HUD sits just under the menu bar and the empty space below is invisible.
-        .frame(width: 400, alignment: .top)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .animation(.smooth(duration: 0.28), value: appState.phase)
-    }
-}
-
-// MARK: - Status capsule
-
-private struct StatusCapsule: View {
-    @Bindable var appState: AppState
-
-    var body: some View {
-        // Tick ~15×/s while listening so the lens/clock stay live; paused otherwise.
+        // Tick ~15×/s while listening so the clock and limit tint stay live;
+        // paused otherwise.
         TimelineView(.animation(minimumInterval: 1.0 / 15.0,
                                 paused: appState.phase != .listening)) { context in
-            let progress = RecordingProgress(start: appState.recordingStartDate,
-                                             limit: appState.recordingLimitSeconds,
-                                             now: context.date)
-            HStack(spacing: 7) {
-                if appState.phase == .transcribing || appState.phase == .polishing {
-                    // Polishing (formatter LLM pass) renders like transcribing,
-                    // with its own label so the extra beat is explained.
-                    TranscribingIndicator(tint: AppTheme.progress)
-                    Text(appState.phase.label)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                } else {
-                    // A deliberately tiny single-line pill: amplitude + how long
-                    // we've been recording. The transcript box below holds the words.
-                    AmplitudeMeter(level: appState.level, tint: progress.tint)
-                    Text(progress.centerText)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(progress.tint)
-                    if let text = progress.secondaryText {
-                        Text(text)
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(progress.secondaryColor)
-                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                    }
-                }
-            }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 5)
-            // Shimmer BEHIND the content (on the glass), never over the text —
-            // an overlay here drew the sweep across the glyphs and made them
-            // look rough/streaky.
-            .background { Shimmer(active: appState.phase.isActive).clipShape(.capsule) }
-            .glassEffect(.regular.tint(progress.tint.opacity(0.16)), in: .capsule)
-            .fixedSize()   // hug content → a small centered pill, not full width
-            .animation(.easeInOut(duration: 0.2), value: progress.secondaryText)
+            NotchIsland(
+                appState: appState,
+                showTranscript: settings.showLiveTranscription,
+                isOpen: presentation.isOpen,
+                notch: presentation.notch,
+                progress: RecordingProgress(start: appState.recordingStartDate,
+                                            limit: appState.recordingLimitSeconds,
+                                            now: context.date))
         }
+        // Top-anchored in the panel's transparent canvas, flush with the
+        // screen's top edge so the island meets the notch.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The island is always black, so always use the dark-appearance
+        // variants of the status colors.
+        .environment(\.colorScheme, .dark)
     }
 }
 
-// MARK: - Transcript box
+// MARK: - Island
 
-private struct TranscriptBox: View {
+private struct NotchIsland: View {
     @Bindable var appState: AppState
+    let showTranscript: Bool
+    let isOpen: Bool
+    let notch: NotchMetrics
+    let progress: RecordingProgress
 
-    private var isEmpty: Bool { appState.partialText.isEmpty }
-    // Show only the most recent 50 words: the tail is sliced verbatim (original
-    // spacing/newlines) and prefixed with "…" once earlier words drop off, so the
-    // newest words hold a steady position instead of scrolling the whole caption.
-    private var displayText: String {
-        isEmpty ? placeholder : TranscriptWindow.lastWords(appState.partialText, maxWords: 50)
+    /// Width of each wing beside the camera housing.
+    private static let wingWidth: CGFloat = 84
+    /// The concave "shoulders" where the island meets the top edge.
+    private static let topRadius: CGFloat = 8
+    /// Fixed island width once the transcript body is showing.
+    private static let bodyWidth: CGFloat = 440
+
+    private var isFinalizing: Bool {
+        appState.phase == .transcribing || appState.phase == .polishing
+    }
+
+    /// Expand below the top row only once there's something to show — words
+    /// (if live transcription is on) or a limit/minute note.
+    private var showsBody: Bool {
+        isOpen && ((showTranscript && !appState.partialText.isEmpty)
+                   || (!isFinalizing && progress.secondaryText != nil))
+    }
+
+    private var rowHeight: CGFloat { max(notch.height, 28) }
+
+    private var openWidth: CGFloat {
+        let compact = notch.width + 2 * Self.wingWidth + 2 * (Self.topRadius + 12)
+        return showsBody ? max(compact, Self.bodyWidth) : compact
+    }
+
+    /// Collapsed: exactly the notch's silhouette, or a sliver at the top edge
+    /// of a notch-less screen (so it reads as retracting off-screen).
+    private var collapsedSize: CGSize {
+        notch.hasNotch ? CGSize(width: notch.width, height: notch.height)
+                       : CGSize(width: 120, height: 0)
+    }
+
+    private var shape: NotchShape {
+        NotchShape(topRadius: isOpen ? Self.topRadius : 4,
+                   bottomRadius: !isOpen ? 10 : (showsBody ? 24 : rowHeight / 2))
     }
 
     var body: some View {
-        // A SINGLE Text (not an if/else that swaps views): swapping views made
-        // the incoming transcript lay out at its ideal 2-line size for a frame
-        // before settling to one line — the "shows two lines then shrinks" jump.
-        // No .contentTransition here either (it's for morphing glyphs like
-        // numbers, and reflows wrapped captions). Height still animates smoothly.
-        Text(displayText)
-            .font(.system(size: 15, weight: .regular, design: .rounded))
-            .foregroundStyle(isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-            .lineLimit(8)                    // grows with the text, up to a cap
-            .truncationMode(.head)           // keep the latest words visible
-            .frame(maxWidth: .infinity, alignment: isEmpty ? .center : .topLeading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            // No fixed/minimum height — start at one line and grow as text wraps.
-            .fixedSize(horizontal: false, vertical: true)
-            // Shimmer behind the text (on the glass), not over it — keeps the
-            // transcript crisp instead of washing the sweep across the glyphs.
-            .background { Shimmer(active: appState.phase.isActive).clipShape(.rect(cornerRadius: 22)) }
-            .glassEffect(.regular, in: .rect(cornerRadius: 22))
-            .animation(.smooth(duration: 0.25), value: appState.partialText)
+        VStack(spacing: 0) {
+            topRow
+            if showsBody {
+                islandBody
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+            }
+        }
+        .padding(.horizontal, Self.topRadius + 12)
+        .padding(.bottom, showsBody ? 14 : 0)
+        // Content fades in once the island has started to open, and out first
+        // on close, so nothing spills past the shrinking shape.
+        .opacity(isOpen ? 1 : 0)
+        .blur(radius: isOpen ? 0 : 6)
+        .frame(width: isOpen ? openWidth : collapsedSize.width,
+               height: isOpen ? nil : collapsedSize.height,
+               alignment: .top)
+        .background(shape.fill(.black))
+        .clipShape(shape)
+        // A soft glow in the status color that breathes with the voice.
+        .shadow(color: glowColor, radius: 16, y: 6)
+        .animation(.spring(response: 0.42, dampingFraction: 0.8), value: isOpen)
+        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: showsBody)
+        .animation(.smooth(duration: 0.25), value: appState.partialText)
+        .animation(.easeInOut(duration: 0.2), value: progress.secondaryText)
     }
 
-    private var placeholder: String {
-        switch appState.phase {
-        case .transcribing, .polishing: return appState.phase.label
-        default: return "Listening… speak now"
+    private var glowColor: Color {
+        guard isOpen else { return .clear }
+        if isFinalizing { return AppTheme.progress.opacity(0.35) }
+        return progress.tint.opacity(0.18 + 0.4 * Double(min(1, max(0, appState.level))))
+    }
+
+    /// The row level with the notch: one wing each side of the camera housing.
+    private var topRow: some View {
+        HStack(spacing: 0) {
+            Group {
+                if isFinalizing {
+                    TranscribingIndicator(tint: AppTheme.progress)
+                } else {
+                    AmplitudeMeter(level: appState.level, tint: progress.tint)
+                }
+            }
+            .frame(width: Self.wingWidth, alignment: .leading)
+
+            Spacer(minLength: notch.width)
+
+            Group {
+                if isFinalizing {
+                    Text(appState.phase == .polishing ? "Polishing" : "Transcribing")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.7))
+                } else {
+                    Text(progress.centerText)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(progress.tint)
+                        .contentTransition(.numericText())
+                }
+            }
+            .lineLimit(1)
+            .frame(width: Self.wingWidth, alignment: .trailing)
         }
+        .frame(height: rowHeight)
+    }
+
+    private var islandBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !isFinalizing, let note = progress.secondaryText {
+                Text(note)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(progress.secondaryColor)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .transition(.opacity)
+            }
+            if showTranscript && !appState.partialText.isEmpty {
+                // Only the most recent 50 words: the tail is sliced verbatim
+                // and prefixed with "…" once earlier words drop off, so the
+                // newest words hold a steady position. A single Text (no view
+                // swapping) so it never flashes at its ideal size for a frame.
+                Text(TranscriptWindow.lastWords(appState.partialText, maxWords: 50))
+                    .font(.system(size: 14, weight: .regular, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(6)
+                    .truncationMode(.head)        // keep the latest words visible
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.top, 6)
+        .padding(.horizontal, 4)
+    }
+}
+
+/// The island's outline: flush with the top edge, with small concave
+/// "shoulders" flaring into it (like the hardware notch) and rounded bottom
+/// corners. Both radii animate, so the shape morphs as it opens/closes.
+struct NotchShape: Shape {
+    var topRadius: CGFloat
+    var bottomRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(topRadius, bottomRadius) }
+        set { topRadius = newValue.first; bottomRadius = newValue.second }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        // Clamp so a tiny (collapsing) rect never produces crossed curves.
+        let top = max(0, min(topRadius, rect.width / 4, rect.height / 2))
+        let bottom = max(0, min(bottomRadius, (rect.width - 2 * top) / 2, rect.height - top))
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addQuadCurve(to: CGPoint(x: rect.minX + top, y: rect.minY + top),
+                       control: CGPoint(x: rect.minX + top, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.minX + top, y: rect.maxY - bottom))
+        p.addQuadCurve(to: CGPoint(x: rect.minX + top + bottom, y: rect.maxY),
+                       control: CGPoint(x: rect.minX + top, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.maxX - top - bottom, y: rect.maxY))
+        p.addQuadCurve(to: CGPoint(x: rect.maxX - top, y: rect.maxY - bottom),
+                       control: CGPoint(x: rect.maxX - top, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.maxX - top, y: rect.minY + top))
+        p.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY),
+                       control: CGPoint(x: rect.maxX - top, y: rect.minY))
+        p.closeSubpath()
+        return p
     }
 }
 
 // MARK: - Shared bits
-
-/// A soft highlight that sweeps left→right, giving the glass a living sheen.
-private struct Shimmer: View {
-    let active: Bool
-
-    var body: some View {
-        if active {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                let phase = (t.truncatingRemainder(dividingBy: 2.4)) / 2.4   // 0…1 loop
-                GeometryReader { geo in
-                    LinearGradient(colors: [.clear, .white.opacity(0.10), .clear],
-                                   startPoint: .leading, endPoint: .trailing)
-                        .frame(width: geo.size.width * 0.4)
-                        .offset(x: (CGFloat(phase) * 1.8 - 0.4) * geo.size.width)
-                    // No .blendMode here: a non-normal blend promotes this box to
-                    // an offscreen compositing group, which rasterizes the
-                    // transcript text and makes it look unsmoothed. Plain alpha
-                    // blending keeps the glyphs crisply live-rendered.
-                }
-                .allowsHitTesting(false)
-            }
-        }
-    }
-}
 
 /// A row of bars whose heights track the live input amplitude, with a little
 /// idle jitter so it always feels alive.
@@ -213,13 +275,22 @@ private struct TranscribingIndicator: View {
 // MARK: - Previews
 
 #if DEBUG
-@MainActor private func hudPreview(_ appState: AppState, showTranscript: Bool = true) -> some View {
+@MainActor private func hudPreview(_ appState: AppState, showTranscript: Bool = true,
+                                   notch: NotchMetrics = NotchMetrics(width: 185, height: 32, hasNotch: true))
+    -> some View {
     let settings = AppSettings(storeURL: FileManager.default.temporaryDirectory
         .appending(path: "hud-preview-\(UUID().uuidString)/settings.json"))
     settings.showLiveTranscription = showTranscript
-    return HUDView(appState: appState, settings: settings)
-        .padding(40)
-        .background(.black.gradient)   // a stand-in desktop so the glass reads
+    let presentation = HUDPresentation()
+    presentation.notch = notch
+    presentation.isOpen = true
+    return HUDView(appState: appState, settings: settings, presentation: presentation)
+        .frame(width: HUDController.size.width, height: 260)
+        .background(.gray.gradient)   // a stand-in desktop
+}
+
+#Preview("Listening · no words yet (compact)") {
+    hudPreview(.preview(phase: .listening, partialText: "", elapsed: 3, limitSeconds: 1440))
 }
 
 #Preview("Listening · short") {
@@ -232,21 +303,12 @@ private struct TranscribingIndicator: View {
     hudPreview(.preview(
         phase: .listening,
         partialText: "This is a much longer dictation that wraps across several lines so you "
-            + "can see the transcript box grow to fit however many lines the words currently "
+            + "can see the island grow to fit however many lines the words currently "
             + "need, instead of sitting at a fixed height the whole time.",
         elapsed: 47, limitSeconds: 1440))
 }
 
-#Preview("Long transcript (windowed to 50 words)") {
-    // A >50-word partial: the box shows only the most recent 50 words, led by a
-    // "…" for the dropped front, so the newest words sit in a stable position.
-    hudPreview(.preview(
-        phase: .listening,
-        partialText: (1...80).map { "word\($0)" }.joined(separator: " "),
-        elapsed: 92, limitSeconds: 1440))
-}
-
-#Preview("Near limit (red)") {
+#Preview("Near limit (amber note)") {
     hudPreview(.preview(
         phase: .listening, partialText: "Almost at the model's single-pass limit now",
         elapsed: 33, limitSeconds: 40))
@@ -258,19 +320,19 @@ private struct TranscribingIndicator: View {
         elapsed: 46, limitSeconds: 40))
 }
 
-#Preview("Streaming (count-up)") {
-    hudPreview(.preview(
-        phase: .listening, partialText: "Words appear while you speak",
-        elapsed: 75, limitSeconds: nil))
-}
-
 #Preview("Transcribing") {
     hudPreview(.preview(phase: .transcribing, partialText: "Finalizing the transcript"))
 }
 
-#Preview("Live transcription OFF (pill only)") {
+#Preview("Live transcription OFF (compact)") {
     hudPreview(.preview(
         phase: .listening, partialText: "This text is hidden when the setting is off",
         elapsed: 20, limitSeconds: 1440), showTranscript: false)
+}
+
+#Preview("No notch (external display)") {
+    hudPreview(.preview(
+        phase: .listening, partialText: "Hanging from the top edge instead",
+        elapsed: 8, limitSeconds: nil), notch: .fallback)
 }
 #endif
