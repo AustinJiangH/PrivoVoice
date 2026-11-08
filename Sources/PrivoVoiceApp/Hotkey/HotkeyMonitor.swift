@@ -301,18 +301,23 @@ final class HotkeyMonitor {
         // As with the keyboard pair, a toggle sharing the push-to-talk button
         // is ignored rather than firing both at once.
         let ptt = settings.mousePushToTalkButton
-        let toggle = settings.mouseToggleButton == ptt ? nil : settings.mouseToggleButton
+        let toggle = settings.mouseToggleButton?.conflicts(with: ptt) == true
+            ? nil : settings.mouseToggleButton
 
         for (trigger, button) in [(Trigger.mousePushToTalk, ptt), (Trigger.mouseToggle, toggle)] {
             guard let button, button.isAssignable, button.number == number else { continue }
             switch type {
             case .otherMouseDown:
-                guard !Self.isSuspended else { continue }
+                // Exactly the bound ⌘⌥⌃⇧ must be held, so e.g. ⌥+Back fires
+                // while a bare Back still navigates.
+                guard !Self.isSuspended, satisfies(event.flags, button.modifiers) else { continue }
                 setHeld(trigger, true)
                 consume = true
             case .otherMouseUp:
                 // Only swallow the up whose down we swallowed (a binding set
                 // mid-press shouldn't eat a stray up the app is waiting for).
+                // No modifier check: letting go of ⌥ before the button must
+                // still end push-to-talk.
                 if held.contains(trigger) {
                     setHeld(trigger, false)
                     consume = true

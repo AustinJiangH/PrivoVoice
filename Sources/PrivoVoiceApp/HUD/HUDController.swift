@@ -53,6 +53,16 @@ struct NotchMetrics: Equatable {
     }
 }
 
+/// AppKit nudges windows out of the menu-bar strip when they're ordered in or
+/// moved ("constrained" to the screen's visible area) — which dropped the
+/// island below the menu bar so it seemed to slide out from under it. The
+/// HUD deliberately overlaps the menu bar, so keep the frame exactly as set.
+private final class TopEdgePanel: NSPanel {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+}
+
 @MainActor
 final class HUDController {
     private let appState: AppState
@@ -74,7 +84,7 @@ final class HUDController {
         self.appState = appState
         self.settings = settings
 
-        panel = NSPanel(
+        panel = TopEdgePanel(
             contentRect: NSRect(origin: .zero, size: Self.size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -94,6 +104,10 @@ final class HUDController {
             appState: appState, settings: settings, presentation: presentation)
             .tint(AppTheme.accent))
         host.frame = NSRect(origin: .zero, size: Self.size)
+        // On a notched display the window's top safe-area inset covers the
+        // menu-bar strip; SwiftUI would push the island down below it. The
+        // island must start AT the top edge to grow out of the notch.
+        host.safeAreaRegions = []
         panel.contentView = host
 
         observePhase()

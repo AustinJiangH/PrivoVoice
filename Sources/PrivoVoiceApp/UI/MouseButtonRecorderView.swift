@@ -2,9 +2,11 @@
 //
 // While recording it installs a *local* NSEvent monitor for extra mouse
 // buttons (middle / side buttons — never left or right click), so the user
-// presses the button with the pointer over this window. Esc cancels. A button
-// already bound to `conflict` (the other mouse action) is refused with a note
-// and recording continues.
+// presses the button with the pointer over this window, optionally while
+// holding ⌘⌥⌃⇧/fn to record a combination (e.g. ⌥ + Back) that leaves the
+// bare button working as usual. Esc cancels. A binding that collides with
+// `conflict` (the other mouse action) is refused with a note and recording
+// continues.
 
 import SwiftUI
 import AppKit
@@ -30,7 +32,7 @@ struct MouseButtonRecorderView: View {
                         Image(systemName: recording ? "record.circle" : "computermouse")
                             .foregroundStyle(recording ? AppTheme.danger : .secondary)
                         if recording {
-                            Text("Press a mouse button…  (Esc to cancel)")
+                            Text("Press a mouse button, with keys if you like…  (Esc to cancel)")
                                 .monospaced()
                         } else {
                             MouseButtonBadge(button: button)
@@ -95,10 +97,12 @@ struct MouseButtonRecorderView: View {
         case .keyDown:
             if event.keyCode == 53 { stop() }   // Escape cancels
         case .otherMouseDown:
-            let candidate = MouseButton(number: event.buttonNumber)
+            let candidate = MouseButton(
+                number: event.buttonNumber,
+                modifiers: ShortcutRecorderView.modifiers(from: event.modifierFlags))
             guard candidate.isAssignable else { return }
-            if candidate == conflict.wrappedValue {
-                rejection = "Already used by \(conflictName) — pick a different button."
+            if candidate.conflicts(with: conflict.wrappedValue) {
+                rejection = "Already used by \(conflictName) — pick a different button or add a key."
                 return
             }
             rejection = nil
@@ -116,6 +120,20 @@ struct MouseButtonBadge: View {
     let button: MouseButton?
 
     var body: some View {
-        KeyCap(text: button?.displayName ?? "Not set", muted: button == nil)
+        if let button {
+            // Same "[⌥] + [Back (Button 4)]" layout as keyboard chords.
+            HStack(spacing: 5) {
+                ForEach(Array(button.badgeComponents.enumerated()), id: \.offset) { index, token in
+                    if index > 0 {
+                        Text("+")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    KeyCap(text: token, muted: false)
+                }
+            }
+        } else {
+            KeyCap(text: "Not set", muted: true)
+        }
     }
 }

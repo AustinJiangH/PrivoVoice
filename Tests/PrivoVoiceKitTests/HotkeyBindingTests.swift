@@ -61,6 +61,27 @@ final class MouseButtonTests: XCTestCase {
         XCTAssertTrue(MouseButton(number: 3).isAssignable)
     }
 
+    func testCombinationsWithModifiers() {
+        let back = MouseButton(number: 3)
+        let optBack = MouseButton(number: 3, modifiers: [.option])
+        XCTAssertEqual(optBack.displayName, "⌥Back (Button 4)")
+        XCTAssertEqual(optBack.badgeComponents, ["⌥", "Back (Button 4)"])
+        // Same button, different keys held → usable side by side.
+        XCTAssertFalse(back.conflicts(with: optBack))
+        XCTAssertTrue(optBack.conflicts(with: MouseButton(number: 3, modifiers: [.option])))
+        // fn doesn't separate two bindings on the same button.
+        XCTAssertTrue(back.conflicts(with: MouseButton(number: 3, modifiers: [.function])))
+        XCTAssertFalse(back.conflicts(with: nil))
+    }
+
+    func testDecodesLegacyButtonWithoutModifiers() throws {
+        let legacy = try JSONDecoder().decode(MouseButton.self, from: Data(#"{"number":4}"#.utf8))
+        XCTAssertEqual(legacy, MouseButton(number: 4))
+        let roundTrip = try JSONDecoder().decode(
+            MouseButton.self, from: JSONEncoder().encode(MouseButton(number: 4, modifiers: [.control, .shift])))
+        XCTAssertEqual(roundTrip.modifiers, [.control, .shift])
+    }
+
     func testDisplayNames() {
         XCTAssertEqual(MouseButton(number: 3).displayName, "Back (Button 4)")
         XCTAssertEqual(MouseButton(number: 4).displayName, "Forward (Button 5)")
@@ -130,6 +151,11 @@ final class HotkeySettingsTests: XCTestCase {
         XCTAssertTrue(b.toggleHotkey.isEmpty)
         XCTAssertNil(b.mousePushToTalkButton)
         XCTAssertEqual(b.mouseToggleButton, MouseButton(number: 3))
+
+        // Same button but a different key combination: both kept.
+        b.mousePushToTalkButton = MouseButton(number: 3, modifiers: [.option])
+        b.saveNow()
+        XCTAssertEqual(AppSettings(storeURL: store).mouseToggleButton, MouseButton(number: 3))
 
         // Both mouse actions on one button: the toggle is dropped.
         b.mousePushToTalkButton = MouseButton(number: 3)

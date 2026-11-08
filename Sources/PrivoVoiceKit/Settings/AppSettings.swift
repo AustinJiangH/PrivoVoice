@@ -178,7 +178,7 @@ public final class AppSettings {
             mousePushToTalkButton = nil
             healed = true
         }
-        if let b = mouseToggleButton, !b.isAssignable || b == mousePushToTalkButton {
+        if let b = mouseToggleButton, !b.isAssignable || b.conflicts(with: mousePushToTalkButton) {
             mouseToggleButton = nil
             healed = true
         }

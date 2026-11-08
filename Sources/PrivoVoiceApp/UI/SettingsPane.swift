@@ -139,7 +139,8 @@ struct SettingsPane: View {
             }
             Text("Optional. Bind your mouse's side (back/forward) or middle button — click "
                  + "to record, then press the button with the pointer over this window. "
-                 + "The bound button stops doing its usual action while assigned.")
+                 + "Hold keys while pressing it (e.g. ⌥ + Back) to bind a combination, so "
+                 + "the button alone keeps its usual action; a bare button stops doing it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

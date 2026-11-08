@@ -39,6 +39,7 @@ struct HUDView: View {
         // Top-anchored in the panel's transparent canvas, flush with the
         // screen's top edge so the island meets the notch.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea()
         // The island is always black, so always use the dark-appearance
         // variants of the status colors.
         .environment(\.colorScheme, .dark)
