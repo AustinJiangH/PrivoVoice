@@ -44,7 +44,7 @@ public final class Telemetry {
         guard settings.telemetryEnabled else { return }
         let event = TelemetryEvent(
             installID: stats.installID,
-            appVersion: "\(AppInfo.name) \(AppInfo.version)",
+            appVersion: "\(AppInfo.displayName) \(AppInfo.versionDescription)",
             osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
             modelID: modelID,
             sessionSeconds: seconds,

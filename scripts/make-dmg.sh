@@ -5,7 +5,8 @@
 #
 # Usage:  ./scripts/make-dmg.sh          # → dist/PrivoVoice-<version>.dmg
 #
-# Builds the app via make-app.sh (which owns all build/bundle logic), then picks
+# Builds the release flavor via `make-app.sh --release` (which owns all
+# build/bundle logic), then picks
 # the most-trusted signing tier available:
 #
 #   • Developer ID Application identity in the keychain
@@ -30,7 +31,7 @@ cd "$ROOT"
 
 # ── 1. Fresh, signed app build (make-app.sh owns this) ───────────────────────
 echo "[make-dmg] building the app via make-app.sh…"
-./scripts/make-app.sh
+./scripts/make-app.sh --release
 
 APP="$ROOT/build/PrivoVoice.app"
 VERSION="$(grep -m1 'static let version' Sources/PrivoVoiceKit/Support/AppInfo.swift | sed -E 's/.*"([^"]+)".*/\1/')"

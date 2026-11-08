@@ -13,7 +13,7 @@ struct PrivoVoiceApp: App {
     @State private var env = AppEnvironment.shared
 
     var body: some Scene {
-        Window("PrivoVoice", id: WindowID.main) {
+        Window(AppInfo.displayName, id: WindowID.main) {
             RootView()
                 .environment(env)
                 .tint(AppTheme.accent)   // wood accent inherited by all controls
@@ -38,10 +38,17 @@ private struct MenuBarIconLabel: View {
     let phase: DictationPhase
 
     var body: some View {
-        if phase == .idle, let logo = MenuBarIconLabel.logo {
-            Image(nsImage: logo)
-        } else {
-            Image(systemName: phase.menuBarSymbol)
+        // A dev build carries a "DEV" title beside the glyph so it can't be
+        // mistaken for the installed release in the menu bar.
+        HStack(spacing: 3) {
+            if phase == .idle, let logo = MenuBarIconLabel.logo {
+                Image(nsImage: logo)
+            } else {
+                Image(systemName: phase.menuBarSymbol)
+            }
+            if AppInfo.isDevBuild {
+                Text("DEV")
+            }
         }
     }
 

@@ -25,11 +25,9 @@ public final class UsageStats {
     private var saveScheduled = false
     private let storeURL: URL
 
-    /// `~/Library/Application Support/PrivoVoice/usage.json`.
+    /// `~/Library/Application Support/PrivoVoice/usage.json` (`PrivoVoice Dev/` for a dev build).
     public static var defaultStoreURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
-        return base.appending(path: "PrivoVoice/usage.json")
+        AppInfo.supportDirectory.appending(path: "usage.json")
     }
 
     // MARK: Init / persistence

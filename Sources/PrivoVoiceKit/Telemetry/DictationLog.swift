@@ -67,11 +67,9 @@ public final class DictationLog {
     private var saveScheduled = false
     private let storeURL: URL
 
-    /// `~/Library/Application Support/PrivoVoice/dictations.json`.
+    /// `~/Library/Application Support/PrivoVoice/dictations.json` (`PrivoVoice Dev/` for a dev build).
     public static var defaultStoreURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
-        return base.appending(path: "PrivoVoice/dictations.json")
+        AppInfo.supportDirectory.appending(path: "dictations.json")
     }
 
     // MARK: Init / persistence

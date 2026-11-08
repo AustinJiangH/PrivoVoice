@@ -109,11 +109,9 @@ public final class AppSettings {
         return home.appending(path: "Library/PrivoVoice/Models", directoryHint: .isDirectory)
     }
 
-    /// `~/Library/Application Support/PrivoVoice/settings.json`.
+    /// `~/Library/Application Support/PrivoVoice/settings.json` (`PrivoVoice Dev/` for a dev build).
     public static var defaultStoreURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
-        return base.appending(path: "PrivoVoice/settings.json")
+        AppInfo.supportDirectory.appending(path: "settings.json")
     }
 
     // MARK: Init / persistence

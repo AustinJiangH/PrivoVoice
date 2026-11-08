@@ -35,6 +35,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.start()
         self.hotkey = monitor
         updatePermissionStatus()
+        warnIfOtherFlavorRunning()
+    }
+
+    /// The release and dev builds are separate apps, but both install a global
+    /// hotkey tap — running together, one key press dictates twice.
+    private func warnIfOtherFlavorRunning() {
+        let other = AppInfo.otherFlavorBundleID
+        // Exclude ourselves: `swift run` embeds the release bundle id.
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: other)
+            .filter { $0 != NSRunningApplication.current }
+        guard !running.isEmpty else { return }
+        let otherName = AppInfo.isDevBuild ? AppInfo.name : "\(AppInfo.name) Dev"
+        AppEnvironment.shared.appState.lastError = "\(otherName) is also running — both respond to "
+            + "the same hotkeys. Quit one of them."
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {

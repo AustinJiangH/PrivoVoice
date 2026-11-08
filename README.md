@@ -123,9 +123,18 @@ Or build a real, double-clickable `.app`:
 
 ```bash
 ./scripts/setup-signing.sh    # once — stable signing so permissions persist
-./scripts/make-app.sh         # → build/PrivoVoice.app
-open build/PrivoVoice.app
+./scripts/make-app.sh         # → build/PrivoVoice Dev.app
+open "build/PrivoVoice Dev.app"
 ```
+
+Local builds are a separate **PrivoVoice Dev** app (bundle id
+`com.privovoice.app.dev`, a "DEV" badge on the icon and in the menu bar, the git
+commit in Settings → Version), so they never get mixed up with an installed
+release. A dev build keeps its own settings in
+`~/Library/Application Support/PrivoVoice Dev/` (seeded from the release's on
+first launch) and shares the downloaded models. Quit one before using the
+other — both respond to the same hotkeys. `./scripts/make-app.sh --release`
+builds the shipping `PrivoVoice.app`, which is what `make-dmg.sh` packages.
 
 Then follow the onboarding: pick a use case, download the recommended model,
 grant the two permissions below, and **hold `fn`** (or your favorite key) to dictate.

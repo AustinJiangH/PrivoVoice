@@ -6,7 +6,16 @@
 # Accessibility grants persist across rebuilds. Falls back to ad-hoc signing (no
 # persistence) if that identity isn't set up.
 #
-# Usage:  ./scripts/make-app.sh [output-dir]     (default: ./build)
+# Usage:  ./scripts/make-app.sh [--release] [output-dir]     (default: ./build)
+#
+# Flavors:
+#   • default (dev)  → build/PrivoVoice Dev.app — bundle id com.privovoice.app.dev,
+#                      a "DEV" icon badge + menu-bar label, the git commit in the
+#                      version, and its own settings folder. Installs and runs
+#                      side by side with a released PrivoVoice without confusion
+#                      (separate entry in Privacy & Security too).
+#   • --release      → build/PrivoVoice.app — the shipping identity. make-dmg.sh
+#                      uses this; you normally don't need it locally.
 #
 # The result is a genuine GUI app: no terminal, a menu-bar item, stable TCC
 # identity. For distribution, replace the self-signed identity with a Developer
@@ -17,11 +26,28 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+FLAVOR=dev
+if [ "${1:-}" = "--release" ]; then
+    FLAVOR=release
+    shift
+fi
+
 OUT_DIR="${1:-$ROOT/build}"
-APP="$OUT_DIR/PrivoVoice.app"
 CONFIG=release
 
-echo "[make-app] building ($CONFIG) — both processes…"
+if [ "$FLAVOR" = release ]; then
+    APP_NAME="PrivoVoice"
+    BUNDLE_ID="com.privovoice.app"
+    GIT_COMMIT=""
+else
+    APP_NAME="PrivoVoice Dev"
+    BUNDLE_ID="com.privovoice.app.dev"
+    GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then GIT_COMMIT="$GIT_COMMIT+dirty"; fi
+fi
+APP="$OUT_DIR/$APP_NAME.app"
+
+echo "[make-app] building $FLAVOR flavor ($CONFIG) — both processes…"
 swift build -c "$CONFIG" --product PrivoVoice
 swift build -c "$CONFIG" --product PrivoVoiceHelper
 
@@ -47,17 +73,24 @@ for bundle in "$BIN_DIR"/*.bundle; do
     cp -R "$bundle" "$APP/Contents/Resources/$(basename "$bundle")"
 done
 
-# App icon (pre-rendered .icns, generated from the 1024px brand icon).
-cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+# App icon (pre-rendered .icns, generated from the 1024px brand icon). Dev
+# builds get a "DEV" banner stamped on it; fall back to the plain icon if that
+# fails (cosmetic only).
+if [ "$FLAVOR" = dev ] && swift "$ROOT/scripts/dev-icon.swift" \
+        "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null; then
+    :
+else
+    cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>PrivoVoice</string>
-    <key>CFBundleDisplayName</key><string>PrivoVoice</string>
-    <key>CFBundleIdentifier</key><string>com.privovoice.app</string>
+    <key>CFBundleName</key><string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key><string>$APP_NAME</string>
+    <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
     <key>CFBundleExecutable</key><string>PrivoVoice</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -65,6 +98,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>27.0</string>
     <key>LSUIElement</key><true/>
+    <key>PrivoVoiceFlavor</key><string>$FLAVOR</string>
+    <key>PrivoVoiceGitCommit</key><string>$GIT_COMMIT</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>PrivoVoice transcribes your speech on-device while you hold the dictation key.</string>
 </dict>

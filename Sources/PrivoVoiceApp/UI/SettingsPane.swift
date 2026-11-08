@@ -74,7 +74,7 @@ struct SettingsPane: View {
             advancedSection
 
             Section {
-                LabeledContent("Version", value: "\(AppInfo.name) \(AppInfo.version)")
+                LabeledContent("Version", value: "\(AppInfo.displayName) \(AppInfo.versionDescription)")
                 if let err = env.appState.lastError {
                     Label(err, systemImage: "exclamationmark.triangle")
                         .font(.caption)

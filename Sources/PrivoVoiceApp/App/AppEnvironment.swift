@@ -21,6 +21,9 @@ final class AppEnvironment {
     let route = Router()
 
     private init() {
+        // A dev build keeps its own settings; seed them from the release
+        // build's on first launch so it starts with the same model + hotkeys.
+        AppInfo.seedDevSettingsIfNeeded()
         let settings = AppSettings()
         let store = ModelStore(settings: settings)
         self.settings = settings
