@@ -20,6 +20,8 @@ struct PrivoVoiceApp: App {
                 .frame(minWidth: 720, minHeight: 480)
         }
         .windowResizability(.contentMinSize)
+        // Drag the window from any empty background area, not just the toolbar.
+        .windowBackgroundDragBehavior(.enabled)
         .defaultSize(width: 860, height: 560)
 
         MenuBarExtra {

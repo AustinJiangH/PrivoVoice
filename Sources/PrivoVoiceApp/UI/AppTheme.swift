@@ -4,7 +4,7 @@
 // Three layers, used top-down:
 //   • Palette   — raw hues (below). Do NOT reference these in feature views.
 //   • Semantic  — named roles (accent/positive/warning/…). Views use THESE.
-//   • Surfaces  — adaptive tints + frosted materials for backgrounds.
+//   • Surfaces  — adaptive tints washed over the window's frosted material.
 //
 // `Color(light:dark:)` yields a macOS appearance-aware color, so the surface
 // tints follow the system light/dark setting automatically. The semantic hues
@@ -72,9 +72,6 @@ enum AppTheme {
     // MARK: - Surfaces (adaptive) + cards
 
     static let backgroundTint = Color(light: 0xEADFDF, dark: 0x1A1617)  // warm neutral base
-    /// Sidebar wash — clay (per design). Applied at low opacity over the frosted
-    /// `.sidebar` material, so it reads as a soft amber tint in both appearances.
-    static let sidebarTint = sunlitClay
     static let panelTint = Color(light: 0xFDFCFB, dark: 0x322E30)       // near-white / dark warm grey
 
     /// Light translucent card on top of a panel.
@@ -84,52 +81,29 @@ enum AppTheme {
 }
 
 extension View {
-    /// Tinted frosted background for a detail panel. Only the BACKGROUND extends
-    /// under the transparent title bar / toolbar; the content keeps its top safe
-    /// area so a nav-title / search header never overlaps it (our panels live in
-    /// a NavigationSplitView with a fixed header, unlike Voxtine's HSplitView).
+    /// Tint wash for a detail panel, over the window's frosted material (set
+    /// once on the window via `containerBackground(_:for: .window)`). Only the
+    /// BACKGROUND extends under the transparent toolbar; the content keeps its
+    /// top safe area so a nav title never overlaps it.
     func detailPanelStyle(tint: Color = AppTheme.panelTint) -> some View {
-        background(TintedMaterial(tint: tint).ignoresSafeArea())
+        background(TintWash(tint: tint).ignoresSafeArea())
     }
 }
 
-/// A behind-window frosted backdrop (samples the desktop) with a color tint
-/// washed over it. Requires the window to be non-opaque.
-struct TintedMaterial: View {
+/// A translucent color wash over whatever material is behind it — the
+/// window's behind-window frost, so the desktop still shows through.
+struct TintWash: View {
     let tint: Color
-    var material: NSVisualEffectView.Material = .underWindowBackground
     var opacity: Double = 0.35
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VisualEffectView(material: material)
-            .overlay(tint.opacity(effectiveOpacity))
+        tint.opacity(effectiveOpacity)
     }
 
     /// Dark tints need a touch more wash; light tints use the default.
     private var effectiveOpacity: Double {
         colorScheme == .dark ? min(1, opacity + 0.12) : opacity
-    }
-}
-
-/// AppKit `NSVisualEffectView` with **behind-window** blending so the frost
-/// samples the desktop / windows behind ours.
-struct VisualEffectView: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .underWindowBackground
-    var blending: NSVisualEffectView.BlendingMode = .behindWindow
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blending
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        view.material = material
-        view.blendingMode = blending
-        view.state = .active
     }
 }

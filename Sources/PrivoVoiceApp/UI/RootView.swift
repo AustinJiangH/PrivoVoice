@@ -43,19 +43,14 @@ struct RootView: View {
                 ForEach(SidebarItem.allCases) { item in
                     Label(item.title, systemImage: item.systemImage)
                         .tag(item)
-                        .sidebarListRowBackground(isSelected: route.selection == item)
                 }
             }
+            // The system Liquid Glass sidebar draws its own floating surface and
+            // selection (tinted by the app accent via `.tint` on the scene).
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
-            .sidebarListChrome()                       // transparent list scroll bg
             .safeAreaInset(edge: .bottom) {
                 StatusFooter()
             }
-            // Warm frosted sidebar over the window frost (more transparent).
-            .background(
-                TintedMaterial(tint: AppTheme.sidebarTint, material: .sidebar, opacity: 0.2)
-                    .ignoresSafeArea()
-            )
         } detail: {
             Group {
                 switch route.selection {
@@ -64,13 +59,15 @@ struct RootView: View {
                 case .models: ModelsPane()
                 }
             }
-            .detailPanelStyle()                        // panelTint frosted panel
+            .detailPanelStyle()                        // panelTint wash
         }
-        .toolbarBackground(.hidden, for: .windowToolbar)
-        // Tinted frosted base behind everything; the window is made non-opaque so
-        // the behind-window frost samples the desktop.
-        .background(TintedMaterial(tint: AppTheme.backgroundTint).ignoresSafeArea())
-        .background(WindowConfigurator())
+        // Transparent, title-less toolbar so content fills to the top edge.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .toolbar(removing: .title)
+        // Warm tint over the window's frosted (behind-window) material, which
+        // samples the desktop.
+        .background(TintWash(tint: AppTheme.backgroundTint).ignoresSafeArea())
+        .containerBackground(.regularMaterial, for: .window)
         .onAppear { env.store.refresh() }   // rescan the models folder on open
         // First-run onboarding, full-bleed over the main UI until completed/skipped.
         .overlay {
