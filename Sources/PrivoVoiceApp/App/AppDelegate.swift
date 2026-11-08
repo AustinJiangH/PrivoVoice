@@ -60,16 +60,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updatePermissionStatus()
     }
 
+    private static let backedOffMessage = "Hotkeys paused for 30 seconds: macOS kept reporting "
+        + "PrivoVoice as too slow to handle key presses. They turn back on automatically."
+
     /// Reflect the single Accessibility permission (hotkey tap + paste) in the UI.
     private func updatePermissionStatus() {
         guard let hotkey else { return }
         let appState = AppEnvironment.shared.appState
         appState.setHotkeyActive(hotkey.isActive)
         appState.setPasteAuthorized(hotkey.canPaste)
-        if !hotkey.isActive {
+        if hotkey.isBackedOff {
+            appState.lastError = Self.backedOffMessage
+        } else if !hotkey.isActive {
             appState.lastError = "Grant Accessibility to PrivoVoice in System Settings → Privacy "
                 + "& Security to enable the shortcut and pasting (no Input Monitoring needed)."
-        } else if appState.lastError?.hasPrefix("Grant ") == true {
+        } else if appState.lastError?.hasPrefix("Grant ") == true
+                    || appState.lastError == Self.backedOffMessage {
             appState.lastError = nil
         }
     }
