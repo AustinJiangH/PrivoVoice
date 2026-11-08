@@ -1,10 +1,12 @@
-// A click-to-record control for the push-to-talk chord.
+// A click-to-record control for a keyboard dictation chord.
 //
 // While recording it installs a *local* NSEvent monitor (works without any
 // special permission because our window is focused), captures the next key or
 // modifier-only chord, and writes it back through the binding. Press a key with
 // optional modifiers for a key chord; press-and-release modifiers alone (e.g.
-// `fn`) for a modifier-only chord. Esc cancels, Delete clears.
+// `fn`) for a modifier-only chord. Esc cancels, Delete clears. A chord that
+// would collide with `conflict` (the other keyboard binding) is refused with a
+// note and recording continues.
 
 import SwiftUI
 import AppKit
@@ -12,12 +14,28 @@ import PrivoVoiceKit
 
 struct ShortcutRecorderView: View {
     @Binding var combo: KeyCombo
+    /// The other keyboard binding this one must not collide with.
+    var conflict: KeyCombo = .unset
+    /// What `conflict` is called, for the rejection note.
+    var conflictName: String = "another shortcut"
 
     @State private var recording = false
     @State private var monitor: Any?
     @State private var pendingModifiers: KeyModifiers = []
+    @State private var rejection: String?
 
     var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            recorderRow
+            if let rejection {
+                Text(rejection)
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.warning)
+            }
+        }
+    }
+
+    private var recorderRow: some View {
         HStack(spacing: 6) {
             Button(action: toggle) {
                 HStack {
@@ -40,7 +58,7 @@ struct ShortcutRecorderView: View {
             // click reliably clears instead of toggling recording.
             if !recording && !combo.isEmpty {
                 Button {
-                    combo = KeyCombo(keyCode: nil, modifiers: [])
+                    combo = .unset
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
@@ -59,6 +77,9 @@ struct ShortcutRecorderView: View {
     private func startRecording() {
         recording = true
         pendingModifiers = []
+        rejection = nil
+        // Let existing bindings reach this recorder instead of firing dictation.
+        HotkeyMonitor.isSuspended = true
         // Capture keys AND modifier changes so `fn`/modifier-only chords can be
         // recorded too. (This local monitor is for recording only; the live
         // hotkey fires from a CGEventTap.)
@@ -69,10 +90,24 @@ struct ShortcutRecorderView: View {
     }
 
     private func stop() {
+        if recording { HotkeyMonitor.isSuspended = false }
         recording = false
         pendingModifiers = []
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+    }
+
+    /// Write `candidate` back unless it collides with the other binding, in
+    /// which case say so and keep recording.
+    private func commit(_ candidate: KeyCombo) {
+        if candidate.conflicts(with: conflict) {
+            rejection = "Already used by \(conflictName) — pick a different shortcut."
+            pendingModifiers = []
+            return
+        }
+        rejection = nil
+        combo = candidate
+        stop()
     }
 
     private func handle(_ event: NSEvent) {
@@ -85,7 +120,8 @@ struct ShortcutRecorderView: View {
                 return
             }
             if event.keyCode == 51 && mods.isEmpty {   // Delete clears
-                combo = KeyCombo(keyCode: nil, modifiers: [])
+                combo = .unset
+                rejection = nil
                 stop()
                 return
             }
@@ -96,8 +132,7 @@ struct ShortcutRecorderView: View {
             // Reject a bare printable key — the consuming tap would swallow it
             // system-wide. Keep recording so the user adds a modifier/function key.
             guard candidate.isValidGlobalShortcut else { return }
-            combo = candidate
-            stop()
+            commit(candidate)
 
         case .flagsChanged:
             // Modifiers released with no key pressed → a modifier-only chord
@@ -106,8 +141,7 @@ struct ShortcutRecorderView: View {
                 if !pendingModifiers.isEmpty {
                     let candidate = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: pendingModifiers)
                     if candidate.isValidGlobalShortcut {
-                        combo = candidate
-                        stop()
+                        commit(candidate)
                     } else {
                         pendingModifiers = []   // e.g. a lone ⇧ — ignore, keep recording
                     }

@@ -28,8 +28,22 @@ public final class AppSettings {
     public var autoSpacing: Bool {
         didSet { scheduleSave() }
     }
-    /// Push-to-talk hotkey.
+    /// Push-to-talk hotkey: hold to record, release to transcribe.
     public var hotkey: KeyCombo {
+        didSet { scheduleSave() }
+    }
+    /// Toggle-recording hotkey: press once to start, again to stop. Optional
+    /// (empty by default) and must not conflict with `hotkey`.
+    public var toggleHotkey: KeyCombo {
+        didSet { scheduleSave() }
+    }
+    /// Mouse button for push-to-talk (hold to record). Optional.
+    public var mousePushToTalkButton: MouseButton? {
+        didSet { scheduleSave() }
+    }
+    /// Mouse button that toggles recording on/off. Optional; must differ from
+    /// `mousePushToTalkButton`.
+    public var mouseToggleButton: MouseButton? {
         didSet { scheduleSave() }
     }
     /// BCP-47 locale to request from the transcriber.
@@ -106,6 +120,9 @@ public final class AppSettings {
             self.autoCopy = persisted.autoCopy ?? true
             self.autoSpacing = persisted.autoSpacing ?? true
             self.hotkey = persisted.hotkey ?? .defaultCombo
+            self.toggleHotkey = persisted.toggleHotkey ?? .unset
+            self.mousePushToTalkButton = persisted.mousePushToTalkButton
+            self.mouseToggleButton = persisted.mouseToggleButton
             self.localeIdentifier = persisted.localeIdentifier ?? "en-US"
             self.huggingFaceToken = persisted.huggingFaceToken
             self.formatFinalTranscript = persisted.formatFinalTranscript ?? false
@@ -121,6 +138,9 @@ public final class AppSettings {
             self.autoCopy = true
             self.autoSpacing = true
             self.hotkey = .defaultCombo
+            self.toggleHotkey = .unset
+            self.mousePushToTalkButton = nil
+            self.mouseToggleButton = nil
             self.localeIdentifier = "en-US"
             self.huggingFaceToken = nil
             self.formatFinalTranscript = false
@@ -135,10 +155,29 @@ public final class AppSettings {
         // Guard against an unsafe shortcut (e.g. a bare key from an older build)
         // that the consuming tap would swallow system-wide. Property observers
         // don't fire during init, so persist explicitly.
-        if !hotkey.isValidGlobalShortcut {
+        // An empty chord is a deliberate "unset" (every binding is optional).
+        var healed = false
+        if !hotkey.isEmpty, !hotkey.isValidGlobalShortcut {
             hotkey = .defaultCombo
-            saveNow()
+            healed = true
         }
+        // The optional bindings heal to "unset" instead: an unsafe or
+        // conflicting toggle chord, a left/right-click mouse binding, or both
+        // mouse actions on the same button.
+        if !toggleHotkey.isEmpty,
+           !toggleHotkey.isValidGlobalShortcut || toggleHotkey.conflicts(with: hotkey) {
+            toggleHotkey = .unset
+            healed = true
+        }
+        if let b = mousePushToTalkButton, !b.isAssignable {
+            mousePushToTalkButton = nil
+            healed = true
+        }
+        if let b = mouseToggleButton, !b.isAssignable || b == mousePushToTalkButton {
+            mouseToggleButton = nil
+            healed = true
+        }
+        if healed { saveNow() }
     }
 
     /// Coalesce rapid mutations into one write on the next runloop tick.
@@ -158,6 +197,9 @@ public final class AppSettings {
             autoCopy: autoCopy,
             autoSpacing: autoSpacing,
             hotkey: hotkey,
+            toggleHotkey: toggleHotkey,
+            mousePushToTalkButton: mousePushToTalkButton,
+            mouseToggleButton: mouseToggleButton,
             localeIdentifier: localeIdentifier,
             huggingFaceToken: huggingFaceToken,
             formatFinalTranscript: formatFinalTranscript,
@@ -181,6 +223,9 @@ public final class AppSettings {
         var autoCopy: Bool?
         var autoSpacing: Bool?
         var hotkey: KeyCombo?
+        var toggleHotkey: KeyCombo?
+        var mousePushToTalkButton: MouseButton?
+        var mouseToggleButton: MouseButton?
         var localeIdentifier: String?
         var huggingFaceToken: String?
         var formatFinalTranscript: Bool?

@@ -1,4 +1,4 @@
-// A platform-neutral representation of the push-to-talk hotkey.
+// A platform-neutral representation of a keyboard dictation hotkey.
 //
 // Stored as a virtual key code plus a modifier set so it round-trips through
 // settings JSON without depending on AppKit. The macOS app layer maps this to
@@ -90,6 +90,25 @@ public struct KeyCombo: Sendable, Hashable, Codable {
         return modifiers.contains(.function) || modifiers.rawValue.nonzeroBitCount >= 2
     }
 
+    /// Whether pressing one chord would also fire the other, so they can't be
+    /// bound to two different actions at once. Identical chords conflict; so do
+    /// two key chords on the same key whose ⌘⌥⌃⇧ match (`fn` doesn't separate
+    /// them — a chord without `fn` still matches while `fn` is held); and a
+    /// modifier-only chord conflicts with any chord that holds all of its
+    /// modifiers (holding ⌥Space engages a modifier-only ⌥… trigger). An empty
+    /// chord never conflicts.
+    public func conflicts(with other: KeyCombo) -> Bool {
+        if isEmpty || other.isEmpty { return false }
+        if self == other { return true }
+        if let a = keyCode, let b = other.keyCode {
+            let chord: KeyModifiers = [.command, .option, .control, .shift]
+            return a == b && modifiers.intersection(chord) == other.modifiers.intersection(chord)
+        }
+        if isModifierOnly && other.modifiers.isSuperset(of: modifiers) { return true }
+        if other.isModifierOnly && modifiers.isSuperset(of: other.modifiers) { return true }
+        return false
+    }
+
     /// Rendered chord, e.g. "⌥⌘Space" or "fn".
     public var displayString: String {
         if isEmpty { return "Not set" }
@@ -112,4 +131,7 @@ public struct KeyCombo: Sendable, Hashable, Codable {
     /// consuming `CGEventTap`, which needs only Accessibility (the same grant used
     /// to paste) — never Input Monitoring.
     public static let defaultCombo = KeyCombo(keyCode: nil, keyLabel: nil, modifiers: [.function])
+
+    /// An unset chord (no key, no modifiers) — the default for optional bindings.
+    public static let unset = KeyCombo(keyCode: nil, modifiers: [])
 }

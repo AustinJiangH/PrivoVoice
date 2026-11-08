@@ -26,10 +26,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Floating status HUD (top-center), driven by AppState.
         hud = HUDController(appState: env.appState, settings: env.settings)
 
-        // Global push-to-talk.
+        // Global push-to-talk / toggle triggers (keyboard + mouse).
         let monitor = HotkeyMonitor(settings: env.settings)
-        monitor.onPress = { env.dictation.start() }
-        monitor.onRelease = { env.dictation.stop() }
+        monitor.onStart = { env.dictation.start() }
+        monitor.onStop = { env.dictation.stop() }
+        monitor.isRecording = { env.dictation.isRunning }
         monitor.onPermissionChange = { [weak self] in self?.updatePermissionStatus() }
         monitor.start()
         self.hotkey = monitor

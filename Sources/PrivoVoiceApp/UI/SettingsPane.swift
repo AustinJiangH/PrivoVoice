@@ -1,4 +1,5 @@
-// The Settings pane: push-to-talk shortcut, auto-copy, models location, version.
+// The Settings pane: hotkeys (keyboard + mouse), dictation options, models
+// location, version.
 
 import SwiftUI
 import AppKit
@@ -15,24 +16,9 @@ struct SettingsPane: View {
         @Bindable var settings = env.settings
 
         Form {
-            Section("Dictation") {
-                LabeledContent("Push-to-talk") {
-                    VStack(alignment: .trailing, spacing: 6) {
-                        ShortcutRecorderView(combo: $settings.hotkey)
-                        HStack(spacing: 6) {
-                            Text("Presets:").font(.caption2).foregroundStyle(.secondary)
-                            presetButton("fn", KeyCombo(keyCode: nil, modifiers: [.function]))
-                            presetButton("⌥Space", KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option]))
-                            presetButton("F5", KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: []))
-                        }
-                    }
-                }
-                Text("Hold the shortcut to record; release to transcribe and paste. Any key or "
-                     + "chord works — including `fn`+Space — and the trigger is consumed so it "
-                     + "doesn't type. Needs Accessibility (same as pasting); no Input Monitoring.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            hotkeysSection
 
+            Section("Dictation") {
                 Toggle("Copy transcript to clipboard automatically", isOn: $settings.autoCopy)
 
                 Toggle("Add a space before each dictation", isOn: $settings.autoSpacing)
@@ -44,24 +30,6 @@ struct SettingsPane: View {
                 Toggle("Show live transcription in the floating HUD", isOn: $settings.showLiveTranscription)
                 Text("When off, the HUD is just the small amplitude meter and recording timer — "
                      + "your words are still pasted when you release the key.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                LabeledContent("Hotkey") {
-                    statusRow(ok: env.appState.hotkeyActive,
-                              okText: "Active", badText: "Inactive")
-                }
-                LabeledContent("Accessibility") {
-                    HStack(spacing: 6) {
-                        statusRow(ok: env.appState.pasteAuthorized,
-                                  okText: "Granted", badText: "Not granted")
-                        if !env.appState.pasteAuthorized {
-                            Button("Open Accessibility") { openPrivacy("Privacy_Accessibility") }
-                        }
-                    }
-                }
-                Text("Accessibility powers the push-to-talk hotkey (any key/chord) and pasting. "
-                     + "No Input Monitoring is needed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -124,6 +92,74 @@ struct SettingsPane: View {
             Text("PrivoVoice will download \(FormatterStore.shared.displayName) "
                  + "(\(FormatterStore.shared.approxSizeDescription)) from Hugging Face "
                  + "to your Mac.")
+        }
+    }
+
+    /// Keyboard + mouse triggers: push-to-talk (hold) and toggle (press to
+    /// start, press again to stop). Every binding is optional; the two
+    /// keyboard chords (and the two mouse buttons) must not collide. Split out of `body` to keep the Form expression type-checkable.
+    @ViewBuilder
+    private var hotkeysSection: some View {
+        @Bindable var settings = env.settings
+        Section("Hotkeys") {
+            LabeledContent("Push-to-talk") {
+                VStack(alignment: .trailing, spacing: 6) {
+                    ShortcutRecorderView(combo: $settings.hotkey,
+                                         conflict: settings.toggleHotkey,
+                                         conflictName: "Toggle recording")
+                    HStack(spacing: 6) {
+                        Text("Presets:").font(.caption2).foregroundStyle(.secondary)
+                        presetButton("fn", KeyCombo(keyCode: nil, modifiers: [.function]))
+                        presetButton("⌥Space", KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option]))
+                        presetButton("F5", KeyCombo(keyCode: 96, keyLabel: "F5", modifiers: []))
+                    }
+                }
+            }
+            LabeledContent("Toggle recording") {
+                ShortcutRecorderView(combo: $settings.toggleHotkey,
+                                     conflict: settings.hotkey,
+                                     conflictName: "Push-to-talk")
+            }
+            Text("Push-to-talk: hold to record, release to transcribe and paste. Toggle "
+                 + "recording: press once to start, press again to stop. Use either or both "
+                 + "— they can't share a key. Any key or chord works, including `fn`+Space, "
+                 + "and the trigger is consumed so it doesn't type.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            LabeledContent("Mouse push-to-talk") {
+                MouseButtonRecorderView(button: $settings.mousePushToTalkButton,
+                                        conflict: settings.mouseToggleButton,
+                                        conflictName: "Mouse toggle recording")
+            }
+            LabeledContent("Mouse toggle recording") {
+                MouseButtonRecorderView(button: $settings.mouseToggleButton,
+                                        conflict: settings.mousePushToTalkButton,
+                                        conflictName: "Mouse push-to-talk")
+            }
+            Text("Optional. Bind your mouse's side (back/forward) or middle button — click "
+                 + "to record, then press the button with the pointer over this window. "
+                 + "The bound button stops doing its usual action while assigned.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                LabeledContent("Hotkey") {
+                    statusRow(ok: env.appState.hotkeyActive,
+                              okText: "Active", badText: "Inactive")
+                }
+                LabeledContent("Accessibility") {
+                    HStack(spacing: 6) {
+                        statusRow(ok: env.appState.pasteAuthorized,
+                                  okText: "Granted", badText: "Not granted")
+                        if !env.appState.pasteAuthorized {
+                            Button("Open Accessibility") { openPrivacy("Privacy_Accessibility") }
+                        }
+                    }
+                }
+                Text("Accessibility powers the hotkeys (keyboard and mouse) and pasting. "
+                     + "No Input Monitoring is needed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
         }
     }
 
@@ -240,6 +276,7 @@ struct SettingsPane: View {
         Button(title) { env.settings.hotkey = combo }
             .buttonStyle(.borderless)
             .font(.caption2)
+            .disabled(combo.conflicts(with: env.settings.toggleHotkey))
     }
 
     private func statusRow(ok: Bool, okText: String, badText: String) -> some View {

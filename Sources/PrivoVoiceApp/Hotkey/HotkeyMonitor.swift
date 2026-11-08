@@ -1,4 +1,4 @@
-// Global push-to-talk via a CONSUMING CGEventTap — the same approach Handy uses.
+// Global dictation triggers via a CONSUMING CGEventTap — the same approach Handy uses.
 //
 // The key insight: a consuming tap (`kCGEventTapOptionDefault`) requires
 // ACCESSIBILITY, not Input Monitoring — only the passive `.listenOnly` tap needs
@@ -6,8 +6,12 @@
 // extra permission, works with ANY key (including `fn`+Space and bare keys), and
 // CONSUMES the trigger so it doesn't type while you dictate.
 //
-// The tap reads `settings.hotkey` live on each event, so changing the shortcut
-// takes effect immediately with no re-registration.
+// Four optional triggers share the tap: a keyboard push-to-talk chord, a
+// keyboard toggle chord, and the same pair on extra mouse buttons (middle /
+// side buttons). Push-to-talk records while held; toggle starts on one press
+// and stops on the next. The tap reads the bindings from `settings` live on
+// each event, so changing a shortcut takes effect immediately with no
+// re-registration.
 
 import AppKit
 import CoreGraphics
@@ -15,15 +19,39 @@ import PrivoVoiceKit
 
 @MainActor
 final class HotkeyMonitor {
-    var onPress: (@MainActor () -> Void)?
-    var onRelease: (@MainActor () -> Void)?
+    /// The four bindable triggers.
+    enum Trigger {
+        case keyboardPushToTalk, keyboardToggle, mousePushToTalk, mouseToggle
+
+        var isToggle: Bool { self == .keyboardToggle || self == .mouseToggle }
+    }
+
+    var onStart: (@MainActor () -> Void)?
+    var onStop: (@MainActor () -> Void)?
+    /// Whether a recording session is live right now. Lets a toggle press
+    /// resync after a session ended without us (start failed, cancelled), so
+    /// the next press starts instead of being swallowed as a no-op stop.
+    var isRecording: (@MainActor () -> Bool)?
     var onPermissionChange: (@MainActor () -> Void)?
+
+    /// Set while a shortcut recorder in the UI is capturing, so pressing an
+    /// existing binding records it instead of starting dictation (and isn't
+    /// swallowed before the recorder sees it).
+    static var isSuspended = false
 
     private let settings: AppSettings
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
-    private var isDown = false
     private var retryTimer: Timer?
+
+    /// Triggers physically held right now — edge detection, auto-repeat
+    /// suppression, and knowing which key-up / mouse-up to consume.
+    private var held: Set<Trigger> = []
+    /// Whether we started a session that hasn't been stopped yet.
+    private var sessionOn = false
+    /// The push-to-talk trigger that owns the live session (its release
+    /// stops it), or `nil` for a toggle-started session.
+    private var holdOwner: Trigger?
 
     /// Tap installed — implies Accessibility is granted (which also enables paste).
     private(set) var isActive = false
@@ -68,7 +96,10 @@ final class HotkeyMonitor {
         let mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.keyUp.rawValue) |
-            (1 << CGEventType.flagsChanged.rawValue)
+            (1 << CGEventType.flagsChanged.rawValue) |
+            (1 << CGEventType.otherMouseDown.rawValue) |
+            (1 << CGEventType.otherMouseUp.rawValue) |
+            (1 << CGEventType.otherMouseDragged.rawValue)
 
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
@@ -105,7 +136,7 @@ final class HotkeyMonitor {
         tap = nil
         source = nil
         isActive = false
-        isDown = false
+        releaseAll()
     }
 
     /// Poll for Accessibility until the tap installs — a menu-bar app can't rely
@@ -125,65 +156,149 @@ final class HotkeyMonitor {
 
     // MARK: Matching
 
-    /// Returns `true` to consume (swallow) the event so its key doesn't type.
+    /// Returns `true` to consume (swallow) the event so its key doesn't type
+    /// (or its mouse button doesn't navigate).
     private func handle(type: CGEventType, event: CGEvent) -> Bool {
         // Re-enable if the system disabled the tap (slow callback / input storm).
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-            // The trigger's key-up may have been missed during the disabled
+            // A trigger's release may have been missed during the disabled
             // window — don't strand a held session.
-            if isDown { transition(to: false) }
+            releaseAll()
             return false
         }
+        guard !Self.isSuspended else { return false }
 
-        let combo = settings.hotkey
-        guard !combo.isEmpty, combo.isValidGlobalShortcut else { return false }
-        let flags = event.flags
-
-        if combo.isModifierOnly {
-            // fn / modifier-only: fire on the modifier engaging/disengaging.
-            // Use a subset (not exact) test so tapping another modifier while the
-            // trigger is held doesn't spuriously stop/restart. Don't consume —
-            // modifiers don't type, and swallowing flagsChanged would corrupt
-            // global modifier state.
-            if type == .flagsChanged {
-                transition(to: flags.contains(requiredFlags(combo.modifiers)))
-            }
-            return false
-        }
-
-        guard let keyCode = combo.keyCode else { return false }
-        let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         switch type {
-        case .keyDown where code == keyCode:
-            if satisfies(flags, combo.modifiers) {
-                transition(to: true)
-                return true   // CONSUME → the trigger key doesn't type
-            }
-            return false
-        case .keyUp where code == keyCode:
-            if isDown {
-                transition(to: false)
-                return true   // consume the matching key-up too
-            }
-            return false
+        case .otherMouseDown, .otherMouseUp, .otherMouseDragged:
+            return handleMouse(type: type, event: event)
         default:
-            return false
+            return handleKey(type: type, event: event)
         }
     }
 
-    /// Edge-detect, and defer the (possibly slow) start/stop off the tap callback
-    /// so it returns immediately and the tap stays responsive.
-    private func transition(to engaged: Bool) {
-        if engaged, !isDown {
-            isDown = true
-            let cb = onPress
-            Task { @MainActor in cb?() }
-        } else if !engaged, isDown {
-            isDown = false
-            let cb = onRelease
-            Task { @MainActor in cb?() }
+    private func handleKey(type: CGEventType, event: CGEvent) -> Bool {
+        let flags = event.flags
+        let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        var consume = false
+
+        for (trigger, combo) in [(Trigger.keyboardPushToTalk, settings.hotkey),
+                                 (Trigger.keyboardToggle, settings.toggleHotkey)] {
+            guard !combo.isEmpty, combo.isValidGlobalShortcut else { continue }
+
+            if combo.isModifierOnly {
+                // fn / modifier-only: fire on the modifier engaging/disengaging.
+                // Use a subset (not exact) test so tapping another modifier while
+                // the trigger is held doesn't spuriously stop/restart. Don't
+                // consume — modifiers don't type, and swallowing flagsChanged
+                // would corrupt global modifier state.
+                if type == .flagsChanged {
+                    setHeld(trigger, flags.contains(requiredFlags(combo.modifiers)))
+                }
+                continue
+            }
+
+            guard let keyCode = combo.keyCode, code == keyCode else { continue }
+            switch type {
+            case .keyDown:
+                // Auto-repeat of a held trigger: swallow it, don't re-fire.
+                if held.contains(trigger) {
+                    consume = true
+                } else if satisfies(flags, combo.modifiers) {
+                    setHeld(trigger, true)
+                    consume = true   // CONSUME → the trigger key doesn't type
+                }
+            case .keyUp:
+                if held.contains(trigger) {
+                    setHeld(trigger, false)
+                    consume = true   // consume the matching key-up too
+                }
+            default:
+                break
+            }
         }
+        return consume
+    }
+
+    private func handleMouse(type: CGEventType, event: CGEvent) -> Bool {
+        let number = Int(event.getIntegerValueField(.mouseEventButtonNumber))
+        var consume = false
+
+        for (trigger, button) in [(Trigger.mousePushToTalk, settings.mousePushToTalkButton),
+                                  (Trigger.mouseToggle, settings.mouseToggleButton)] {
+            guard let button, button.isAssignable, button.number == number else { continue }
+            switch type {
+            case .otherMouseDown:
+                setHeld(trigger, true)
+                consume = true
+            case .otherMouseUp:
+                // Only swallow the up whose down we swallowed (a binding set
+                // mid-press shouldn't eat a stray up the app is waiting for).
+                if held.contains(trigger) {
+                    setHeld(trigger, false)
+                    consume = true
+                }
+            default:
+                // Drags with the bound button held belong to the press we ate.
+                consume = held.contains(trigger)
+            }
+        }
+        return consume
+    }
+
+    // MARK: Session state
+
+    /// Edge-detect a trigger going down/up and drive the session.
+    private func setHeld(_ trigger: Trigger, _ down: Bool) {
+        if down {
+            guard held.insert(trigger).inserted else { return }
+            pressed(trigger)
+        } else {
+            guard held.remove(trigger) != nil else { return }
+            if trigger == holdOwner { endSession() }
+        }
+    }
+
+    private func pressed(_ trigger: Trigger) {
+        // Resync if the session ended without us (failed start, cancel, …).
+        if sessionOn, let isRecording, !isRecording() {
+            sessionOn = false
+            holdOwner = nil
+        }
+        if trigger.isToggle {
+            // Toggle: start when idle; stop any live session (including one a
+            // push-to-talk trigger is still holding).
+            sessionOn ? endSession() : beginSession(owner: nil)
+        } else if !sessionOn {
+            // Push-to-talk while a session is already live is a no-op; its
+            // release then won't stop a session it didn't start.
+            beginSession(owner: trigger)
+        }
+    }
+
+    /// Defer the (possibly slow) start/stop off the tap callback so it returns
+    /// immediately and the tap stays responsive.
+    private func beginSession(owner: Trigger?) {
+        sessionOn = true
+        holdOwner = owner
+        let cb = onStart
+        Task { @MainActor in cb?() }
+    }
+
+    private func endSession() {
+        guard sessionOn else { return }
+        sessionOn = false
+        holdOwner = nil
+        let cb = onStop
+        Task { @MainActor in cb?() }
+    }
+
+    /// Forget every held trigger; stop a push-to-talk session whose release
+    /// we can no longer observe. A toggle session keeps running — it doesn't
+    /// depend on anything being held.
+    private func releaseAll() {
+        if holdOwner != nil { endSession() }
+        held.removeAll()
     }
 
     /// Exact-match the ⌘⌥⌃⇧ modifiers (so extra held modifiers don't over-trigger)
