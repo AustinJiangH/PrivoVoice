@@ -9,7 +9,7 @@
 # Usage:  ./scripts/make-app.sh [--release] [output-dir]     (default: ./build)
 #
 # Flavors:
-#   • default (dev)  → build/PrivoVoice Dev.app — bundle id com.privovoice.app.dev,
+#   • default (dev)  → build/PrivoVoice-Dev.app — bundle id com.privovoice.app.dev,
 #                      a "DEV" icon badge + menu-bar label, the git commit in the
 #                      version, and its own settings folder. Installs and runs
 #                      side by side with a released PrivoVoice without confusion
@@ -45,7 +45,9 @@ else
     GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
     if [ -n "$(git status --porcelain 2>/dev/null)" ]; then GIT_COMMIT="$GIT_COMMIT+dirty"; fi
 fi
-APP="$OUT_DIR/$APP_NAME.app"
+# No spaces in the bundle's file name so paths can be typed unquoted; the
+# display name (CFBundleName) keeps the space.
+APP="$OUT_DIR/${APP_NAME// /-}.app"
 
 echo "[make-app] building $FLAVOR flavor ($CONFIG) — both processes…"
 swift build -c "$CONFIG" --product PrivoVoice
@@ -129,5 +131,5 @@ codesign --force --sign "$SIGN_ID" "$APP/Contents/MacOS/PrivoVoiceHelper"
 codesign --force --sign "$SIGN_ID" "$APP"
 
 echo "[make-app] done: $APP"
-echo "[make-app] launch with:  open \"$APP\""
+echo "[make-app] launch with:  open $APP"
 echo "[make-app] first run prompts for Microphone + Accessibility — grant, then relaunch."

@@ -123,8 +123,8 @@ Or build a real, double-clickable `.app`:
 
 ```bash
 ./scripts/setup-signing.sh    # once — stable signing so permissions persist
-./scripts/make-app.sh         # → build/PrivoVoice Dev.app
-open "build/PrivoVoice Dev.app"
+./scripts/make-app.sh         # → build/PrivoVoice-Dev.app
+open build/PrivoVoice-Dev.app
 ```
 
 Local builds are a separate **PrivoVoice Dev** app (bundle id
