@@ -17,7 +17,10 @@ struct PrivoVoiceApp: App {
             RootView()
                 .environment(env)
                 .tint(AppTheme.accent)   // wood accent inherited by all controls
-                .frame(minWidth: 720, minHeight: 480)
+                // Height only: the minimum width comes from the split view's
+                // own column minimums (RootView). A minWidth here fought the
+                // sidebar's reopen animation — it stalled halfway, then snapped.
+                .frame(minHeight: 480)
         }
         .windowResizability(.contentMinSize)
         // Drag the window from any empty background area, not just the toolbar.

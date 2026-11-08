@@ -60,6 +60,8 @@ struct RootView: View {
                 }
             }
             .detailPanelStyle()                        // panelTint wash
+            // With the sidebar's 190 this sets the window's minimum width.
+            .navigationSplitViewColumnWidth(min: 510, ideal: 650)
         }
         // Transparent, title-less toolbar so content fills to the top edge.
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
