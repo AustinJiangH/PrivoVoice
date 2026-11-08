@@ -37,13 +37,14 @@ public final class AppSettings {
     public var toggleHotkey: KeyCombo {
         didSet { scheduleSave() }
     }
-    /// Mouse button for push-to-talk (hold to record). Optional.
-    public var mousePushToTalkButton: MouseButton? {
+    /// Mouse button or button chord for push-to-talk (hold to record).
+    /// Optional.
+    public var mousePushToTalkButton: MouseChord? {
         didSet { scheduleSave() }
     }
-    /// Mouse button that toggles recording on/off. Optional; must differ from
-    /// `mousePushToTalkButton`.
-    public var mouseToggleButton: MouseButton? {
+    /// Mouse button or button chord that toggles recording on/off. Optional;
+    /// must not overlap `mousePushToTalkButton` (see `MouseChord.conflicts`).
+    public var mouseToggleButton: MouseChord? {
         didSet { scheduleSave() }
     }
     /// BCP-47 locale to request from the transcriber.
@@ -167,8 +168,8 @@ public final class AppSettings {
             healed = true
         }
         // The optional bindings heal to "unset" instead: an unsafe or
-        // conflicting toggle chord, a left/right-click mouse binding, or both
-        // mouse actions on the same button.
+        // conflicting toggle chord, a left/right-click mouse binding, or two
+        // mouse bindings where one would fire the other.
         if !toggleHotkey.isEmpty,
            !toggleHotkey.isValidGlobalShortcut || toggleHotkey.conflicts(with: hotkey) {
             toggleHotkey = .unset
@@ -233,8 +234,8 @@ public final class AppSettings {
         var autoSpacing: Bool?
         var hotkey: KeyCombo?
         var toggleHotkey: KeyCombo?
-        var mousePushToTalkButton: MouseButton?
-        var mouseToggleButton: MouseButton?
+        var mousePushToTalkButton: MouseChord?
+        var mouseToggleButton: MouseChord?
         var localeIdentifier: String?
         var huggingFaceToken: String?
         var formatFinalTranscript: Bool?

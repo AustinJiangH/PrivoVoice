@@ -128,19 +128,19 @@ struct SettingsPane: View {
                 .foregroundStyle(.secondary)
 
             LabeledContent("Mouse push-to-talk") {
-                MouseButtonRecorderView(button: $settings.mousePushToTalkButton,
-                                        conflict: $settings.mouseToggleButton,
-                                        conflictName: "Mouse toggle recording")
+                MouseChordRecorderView(chord: $settings.mousePushToTalkButton,
+                                       conflict: $settings.mouseToggleButton,
+                                       conflictName: "Mouse toggle recording")
             }
             LabeledContent("Mouse toggle recording") {
-                MouseButtonRecorderView(button: $settings.mouseToggleButton,
-                                        conflict: $settings.mousePushToTalkButton,
-                                        conflictName: "Mouse push-to-talk")
+                MouseChordRecorderView(chord: $settings.mouseToggleButton,
+                                       conflict: $settings.mousePushToTalkButton,
+                                       conflictName: "Mouse push-to-talk")
             }
-            Text("Optional. Bind your mouse's side (back/forward) or middle button — click "
-                 + "to record, then press the button with the pointer over this window. "
-                 + "Hold keys while pressing it (e.g. ⌥ + Back) to bind a combination, so "
-                 + "the button alone keeps its usual action; a bare button stops doing it.")
+            Text("Optional. Bind a mouse button or a chord of buttons pressed together "
+                 + "(e.g. Back + Middle) — click to record, then press them with the pointer "
+                 + "over this window. In a chord each button alone keeps its usual action; a "
+                 + "single bound button stops doing it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

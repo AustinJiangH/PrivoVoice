@@ -53,39 +53,50 @@ final class KeyComboConflictTests: XCTestCase {
     }
 }
 
-final class MouseButtonTests: XCTestCase {
+final class MouseChordTests: XCTestCase {
     func testOnlyExtraButtonsAreAssignable() {
-        XCTAssertFalse(MouseButton(number: 0).isAssignable)
-        XCTAssertFalse(MouseButton(number: 1).isAssignable)
-        XCTAssertTrue(MouseButton(number: 2).isAssignable)
-        XCTAssertTrue(MouseButton(number: 3).isAssignable)
+        XCTAssertFalse(MouseChord(button: 0).isAssignable)
+        XCTAssertFalse(MouseChord(button: 1).isAssignable)
+        XCTAssertTrue(MouseChord(button: 2).isAssignable)
+        XCTAssertTrue(MouseChord(buttons: [3, 2]).isAssignable)
+        XCTAssertFalse(MouseChord(buttons: [3, 1]).isAssignable, "a chord can't include right-click")
+        XCTAssertFalse(MouseChord(buttons: []).isAssignable)
     }
 
-    func testCombinationsWithModifiers() {
-        let back = MouseButton(number: 3)
-        let optBack = MouseButton(number: 3, modifiers: [.option])
-        XCTAssertEqual(optBack.displayName, "⌥Back (Button 4)")
-        XCTAssertEqual(optBack.badgeComponents, ["⌥", "Back (Button 4)"])
-        // Same button, different keys held → usable side by side.
-        XCTAssertFalse(back.conflicts(with: optBack))
-        XCTAssertTrue(optBack.conflicts(with: MouseButton(number: 3, modifiers: [.option])))
-        // fn doesn't separate two bindings on the same button.
-        XCTAssertTrue(back.conflicts(with: MouseButton(number: 3, modifiers: [.function])))
+    func testChordIsOrderIndependent() {
+        XCTAssertEqual(MouseChord(buttons: [3, 2]), MouseChord(buttons: [2, 3, 3]))
+        XCTAssertTrue(MouseChord(buttons: [2, 3]).isChord)
+        XCTAssertFalse(MouseChord(button: 3).isChord)
+    }
+
+    func testConflictsWhenOneContainsTheOther() {
+        let back = MouseChord(button: 3)
+        let backMiddle = MouseChord(buttons: [3, 2])
+        let backForward = MouseChord(buttons: [3, 4])
+        // Pressing Back + Middle passes through "Back held".
+        XCTAssertTrue(back.conflicts(with: backMiddle))
+        XCTAssertTrue(backMiddle.conflicts(with: back))
+        XCTAssertTrue(backMiddle.conflicts(with: MouseChord(buttons: [2, 3])))
+        // Sharing a button is fine as long as neither contains the other.
+        XCTAssertFalse(backMiddle.conflicts(with: backForward))
+        XCTAssertFalse(back.conflicts(with: MouseChord(button: 4)))
         XCTAssertFalse(back.conflicts(with: nil))
     }
 
-    func testDecodesLegacyButtonWithoutModifiers() throws {
-        let legacy = try JSONDecoder().decode(MouseButton.self, from: Data(#"{"number":4}"#.utf8))
-        XCTAssertEqual(legacy, MouseButton(number: 4))
-        let roundTrip = try JSONDecoder().decode(
-            MouseButton.self, from: JSONEncoder().encode(MouseButton(number: 4, modifiers: [.control, .shift])))
-        XCTAssertEqual(roundTrip.modifiers, [.control, .shift])
+    func testDisplayNames() {
+        XCTAssertEqual(MouseChord(button: 3).displayName, "Back (Button 4)")
+        XCTAssertEqual(MouseChord(button: 4).displayName, "Forward (Button 5)")
+        XCTAssertEqual(MouseChord(button: 7).displayName, "Button 8")
+        XCTAssertEqual(MouseChord(buttons: [3, 2]).displayName, "Middle + Back")
+        XCTAssertEqual(MouseChord(buttons: [3, 2]).badgeComponents, ["Middle", "Back"])
     }
 
-    func testDisplayNames() {
-        XCTAssertEqual(MouseButton(number: 3).displayName, "Back (Button 4)")
-        XCTAssertEqual(MouseButton(number: 4).displayName, "Forward (Button 5)")
-        XCTAssertEqual(MouseButton(number: 7).displayName, "Button 8")
+    func testDecodesLegacySingleButton() throws {
+        let legacy = try JSONDecoder().decode(MouseChord.self, from: Data(#"{"number":4}"#.utf8))
+        XCTAssertEqual(legacy, MouseChord(button: 4))
+        let roundTrip = try JSONDecoder().decode(
+            MouseChord.self, from: JSONEncoder().encode(MouseChord(buttons: [2, 3])))
+        XCTAssertEqual(roundTrip, MouseChord(buttons: [2, 3]))
     }
 }
 
@@ -104,14 +115,14 @@ final class HotkeySettingsTests: XCTestCase {
         let store = tempStore()
         let a = AppSettings(storeURL: store)
         a.toggleHotkey = KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option])
-        a.mousePushToTalkButton = MouseButton(number: 3)
-        a.mouseToggleButton = MouseButton(number: 4)
+        a.mousePushToTalkButton = MouseChord(button: 3)
+        a.mouseToggleButton = MouseChord(buttons: [3, 4])
         a.saveNow()
 
         let b = AppSettings(storeURL: store)
         XCTAssertEqual(b.toggleHotkey, KeyCombo(keyCode: 49, keyLabel: "Space", modifiers: [.option]))
-        XCTAssertEqual(b.mousePushToTalkButton, MouseButton(number: 3))
-        XCTAssertEqual(b.mouseToggleButton, MouseButton(number: 4))
+        XCTAssertEqual(b.mousePushToTalkButton, MouseChord(button: 3))
+        XCTAssertNil(b.mouseToggleButton, "Back + Forward contains Back — healed away")
     }
 
     @MainActor
@@ -143,25 +154,27 @@ final class HotkeySettingsTests: XCTestCase {
         let store = tempStore()
         let a = AppSettings(storeURL: store)
         a.toggleHotkey = a.hotkey                       // same chord as push-to-talk
-        a.mousePushToTalkButton = MouseButton(number: 0) // left click
-        a.mouseToggleButton = MouseButton(number: 3)
+        a.mousePushToTalkButton = MouseChord(button: 0) // left click
+        a.mouseToggleButton = MouseChord(button: 3)
         a.saveNow()
 
         let b = AppSettings(storeURL: store)
         XCTAssertTrue(b.toggleHotkey.isEmpty)
         XCTAssertNil(b.mousePushToTalkButton)
-        XCTAssertEqual(b.mouseToggleButton, MouseButton(number: 3))
+        XCTAssertEqual(b.mouseToggleButton, MouseChord(button: 3))
 
-        // Same button but a different key combination: both kept.
-        b.mousePushToTalkButton = MouseButton(number: 3, modifiers: [.option])
+        // Chords that share a button but don't contain each other: both kept.
+        b.mousePushToTalkButton = MouseChord(buttons: [2, 4])
+        b.mouseToggleButton = MouseChord(buttons: [3, 4])
         b.saveNow()
-        XCTAssertEqual(AppSettings(storeURL: store).mouseToggleButton, MouseButton(number: 3))
+        XCTAssertEqual(AppSettings(storeURL: store).mouseToggleButton, MouseChord(buttons: [3, 4]))
 
         // Both mouse actions on one button: the toggle is dropped.
-        b.mousePushToTalkButton = MouseButton(number: 3)
+        b.mousePushToTalkButton = MouseChord(button: 3)
+        b.mouseToggleButton = MouseChord(button: 3)
         b.saveNow()
         let c = AppSettings(storeURL: store)
-        XCTAssertEqual(c.mousePushToTalkButton, MouseButton(number: 3))
+        XCTAssertEqual(c.mousePushToTalkButton, MouseChord(button: 3))
         XCTAssertNil(c.mouseToggleButton)
         // …and the healing was persisted.
         XCTAssertNil(AppSettings(storeURL: store).mouseToggleButton)

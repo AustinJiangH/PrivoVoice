@@ -68,6 +68,15 @@ final class HotkeyMonitor {
     /// while a mouse binding exists, so middle/side-button drags system-wide
     /// don't route through our main-thread callback for nothing.
     private var tapHasMouse = false
+    /// Extra mouse buttons physically held right now (for chord matching).
+    private var mouseDown: Set<Int> = []
+    /// Chord buttons whose press we're holding back until the chord completes
+    /// (fire) or the button is released alone / dragged (replay).
+    private var deferred: Set<Int> = []
+    /// Buttons whose press we consumed for a trigger — their up/drags are ours.
+    private var swallowed: Set<Int> = []
+    /// Tags clicks we re-post (`eventSourceUserData`) so the tap ignores them.
+    private static let replayMarker: Int64 = 0x5052_5643   // "PRVC"
 
     /// Tap installed — implies Accessibility is granted (which also enables paste).
     private(set) var isActive = false
@@ -211,6 +220,8 @@ final class HotkeyMonitor {
         }
         switch type {
         case .otherMouseDown, .otherMouseUp, .otherMouseDragged:
+            // A click we held back and re-posted — let it through untouched.
+            if event.getIntegerValueField(.eventSourceUserData) == Self.replayMarker { return false }
             return handleMouse(type: type, event: event)
         default:
             return handleKey(type: type, event: event)
@@ -294,40 +305,85 @@ final class HotkeyMonitor {
         }
     }
 
+    /// Mouse triggers, with chord support. A single-button trigger owns its
+    /// button outright. A chord button's press is held back (`deferred`)
+    /// until we know whether the rest of the chord follows: completing the
+    /// chord fires the trigger; releasing the button alone replays its click so
+    /// it still does its usual job (back/forward/middle-click), and starting a
+    /// drag hands the press back immediately so middle-drag panning still works.
     private func handleMouse(type: CGEventType, event: CGEvent) -> Bool {
         let number = Int(event.getIntegerValueField(.mouseEventButtonNumber))
-        var consume = false
 
-        // As with the keyboard pair, a toggle sharing the push-to-talk button
-        // is ignored rather than firing both at once.
-        let ptt = settings.mousePushToTalkButton
-        let toggle = settings.mouseToggleButton?.conflicts(with: ptt) == true
-            ? nil : settings.mouseToggleButton
+        // As with the keyboard pair, a toggle overlapping the push-to-talk
+        // chord is ignored rather than firing both at once.
+        let ptt = settings.mousePushToTalkButton.flatMap { $0.isAssignable ? $0 : nil }
+        var toggle = settings.mouseToggleButton.flatMap { $0.isAssignable ? $0 : nil }
+        if toggle?.conflicts(with: ptt) == true { toggle = nil }
+        let bindings = [(Trigger.mousePushToTalk, ptt), (Trigger.mouseToggle, toggle)]
+            .compactMap { trigger, chord in chord.map { (trigger, $0) } }
 
-        for (trigger, button) in [(Trigger.mousePushToTalk, ptt), (Trigger.mouseToggle, toggle)] {
-            guard let button, button.isAssignable, button.number == number else { continue }
-            switch type {
-            case .otherMouseDown:
-                // Exactly the bound ⌘⌥⌃⇧ must be held, so e.g. ⌥+Back fires
-                // while a bare Back still navigates.
-                guard !Self.isSuspended, satisfies(event.flags, button.modifiers) else { continue }
-                setHeld(trigger, true)
-                consume = true
-            case .otherMouseUp:
-                // Only swallow the up whose down we swallowed (a binding set
-                // mid-press shouldn't eat a stray up the app is waiting for).
-                // No modifier check: letting go of ⌥ before the button must
-                // still end push-to-talk.
-                if held.contains(trigger) {
-                    setHeld(trigger, false)
-                    consume = true
+        switch type {
+        case .otherMouseDown:
+            mouseDown.insert(number)
+            guard !Self.isSuspended else { return false }
+            // This press completes a binding: fire it. Its earlier, held-back
+            // buttons were part of the chord, so they're never replayed.
+            if let (trigger, chord) = bindings.first(where: {
+                $0.1.buttons.contains(number) && Set($0.1.buttons).isSubset(of: mouseDown)
+            }) {
+                for button in chord.buttons {
+                    deferred.remove(button)
+                    swallowed.insert(button)
                 }
-            default:
-                // Drags with the bound button held belong to the press we ate.
-                consume = held.contains(trigger)
+                setHeld(trigger, true)
+                return true
             }
+            // Part of a chord that isn't complete yet: hold the click back.
+            if bindings.contains(where: { $0.1.isChord && $0.1.buttons.contains(number) }) {
+                deferred.insert(number)
+                return true
+            }
+            return false
+
+        case .otherMouseUp:
+            mouseDown.remove(number)
+            // Letting go of any button of a held binding ends it.
+            for (trigger, chord) in bindings where chord.buttons.contains(number) {
+                setHeld(trigger, false)
+            }
+            // Released alone — it was a plain click after all.
+            if deferred.remove(number) != nil {
+                replay(.otherMouseDown, button: number, at: event.location)
+                replay(.otherMouseUp, button: number, at: event.location)
+                return true
+            }
+            // Only swallow the up whose down we swallowed (a binding set
+            // mid-press shouldn't eat a stray up the app is waiting for).
+            return swallowed.remove(number) != nil
+
+        default:   // .otherMouseDragged
+            // A drag on a held-back chord button: give the press back first,
+            // then let the drag through.
+            if deferred.remove(number) != nil {
+                replay(.otherMouseDown, button: number, at: event.location)
+                return false
+            }
+            // Drags with a trigger's button held belong to the press we ate.
+            return swallowed.contains(number)
         }
-        return consume
+    }
+
+    /// Re-post a mouse event we held back, tagged so our own tap lets it pass.
+    private func replay(_ type: CGEventType, button: Int, at location: CGPoint) {
+        // CGMouseButton only names left/right/center; any higher button is
+        // created as `.center` and identified by its button-number field.
+        guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
+                                  mouseCursorPosition: location,
+                                  mouseButton: CGMouseButton(rawValue: UInt32(button)) ?? .center)
+        else { return }
+        event.setIntegerValueField(.mouseEventButtonNumber, value: Int64(button))
+        event.setIntegerValueField(.eventSourceUserData, value: Self.replayMarker)
+        event.post(tap: .cghidEventTap)
     }
 
     // MARK: Session state
@@ -384,6 +440,9 @@ final class HotkeyMonitor {
         if holdOwner != nil { endSession() }
         held.removeAll()
         modifierToggleDown = false
+        mouseDown.removeAll()
+        deferred.removeAll()
+        swallowed.removeAll()
     }
 
     /// Exact-match the ⌘⌥⌃⇧ modifiers (so extra held modifiers don't over-trigger)
