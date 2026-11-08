@@ -27,9 +27,15 @@ struct SettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Toggle("Show live transcription in the floating HUD", isOn: $settings.showLiveTranscription)
-                Text("When off, the HUD is just the small amplitude meter and recording timer — "
-                     + "your words are still pasted when you release the key.")
+                Toggle("Show live transcription while dictating", isOn: $settings.showLiveTranscription)
+                Picker("Transcript position", selection: $settings.transcriptPosition) {
+                    Text("Top of screen").tag(TranscriptPosition.top)
+                    Text("Bottom of screen").tag(TranscriptPosition.bottom)
+                }
+                .disabled(!settings.showLiveTranscription)
+                Text("The recording status (level meter and timer) always shows in the notch. "
+                     + "The live transcript appears in a separate glass panel under the menu bar "
+                     + "or above the Dock; when off, your words are still pasted when you finish.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

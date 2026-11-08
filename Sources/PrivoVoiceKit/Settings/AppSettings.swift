@@ -7,6 +7,14 @@
 import Foundation
 import Observation
 
+/// Where the floating live-transcript panel sits on screen.
+public enum TranscriptPosition: String, Sendable, Codable, CaseIterable {
+    /// Just under the menu bar / notch.
+    case top
+    /// Just above the Dock.
+    case bottom
+}
+
 @MainActor
 @Observable
 public final class AppSettings {
@@ -87,6 +95,11 @@ public final class AppSettings {
     public var showLiveTranscription: Bool {
         didSet { scheduleSave() }
     }
+    /// Where the live-transcript panel appears (the recording status always
+    /// sits in the notch). Default top.
+    public var transcriptPosition: TranscriptPosition {
+        didSet { scheduleSave() }
+    }
     /// Whether the first-run onboarding flow has been completed (or skipped). Once
     /// true the flow never shows again. Default false so a fresh install onboards.
     public var hasCompletedOnboarding: Bool {
@@ -136,6 +149,7 @@ public final class AppSettings {
             self.formatterAppliesCorrections = persisted.formatterAppliesCorrections ?? true
             self.telemetryEnabled = persisted.telemetryEnabled ?? false
             self.showLiveTranscription = persisted.showLiveTranscription ?? true
+            self.transcriptPosition = persisted.transcriptPosition ?? .top
             self.hasCompletedOnboarding = persisted.hasCompletedOnboarding ?? false
         } else {
             self.modelsDirectory = Self.defaultModelsDirectory
@@ -154,6 +168,7 @@ public final class AppSettings {
             self.formatterAppliesCorrections = true
             self.telemetryEnabled = false
             self.showLiveTranscription = true
+            self.transcriptPosition = .top
             self.hasCompletedOnboarding = false
         }
 
@@ -218,6 +233,7 @@ public final class AppSettings {
             formatterAppliesCorrections: formatterAppliesCorrections,
             telemetryEnabled: telemetryEnabled,
             showLiveTranscription: showLiveTranscription,
+            transcriptPosition: transcriptPosition,
             hasCompletedOnboarding: hasCompletedOnboarding
         )
         try? snapshot.save(to: storeURL)
@@ -244,6 +260,7 @@ public final class AppSettings {
         var formatterAppliesCorrections: Bool?
         var telemetryEnabled: Bool?
         var showLiveTranscription: Bool?
+        var transcriptPosition: TranscriptPosition?
         var hasCompletedOnboarding: Bool?
 
         static func load(from url: URL) throws -> Persisted {

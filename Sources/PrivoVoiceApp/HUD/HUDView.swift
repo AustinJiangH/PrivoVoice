@@ -1,25 +1,23 @@
-// The floating HUD as a notch "island".
-//
-// A solid black shape that grows out of the camera notch (Dynamic Island
-// style) when dictation starts and shrinks back into it when it ends:
-//   • a top row flanking the camera housing — amplitude meter on the left,
-//     elapsed time on the right (a pulsing dots indicator + label while the
-//     transcript is finalized/polished). The timer turns amber/red as the
-//     current model's single-pass limit approaches/passes.
-//   • below it, the island expands downward to show the live transcript once
-//     words arrive (opt-out in Settings), plus a transient note near/over the
-//     limit or at each minute mark.
-// Solid black — not Liquid Glass — so it merges with the physical notch and the
-// text renders as plain, crisply antialiased glyphs: text drawn inside a glass
-// effect is composited through the glass layer and looked rough. On a screen
-// without a notch the island hangs from the top edge the same way.
+// The floating HUD, in two pieces:
+//   • a notch "island" (`HUDView`) — a solid black shape that grows out of the
+//     camera notch (Dynamic Island style) when dictation starts and shrinks
+//     back into it when it ends, showing only the recording status: amplitude
+//     meter left of the camera housing, elapsed time right (pulsing dots +
+//     label while the transcript is finalized/polished). The timer turns
+//     amber/red as the model's single-pass limit approaches/passes. Black, not
+//     glass, so it merges with the physical notch; on a screen without one it
+//     hangs from the top edge the same way.
+//   • a separate Liquid Glass panel (`TranscriptPanelView`) with the live
+//     transcript (opt-out in Settings), at the top or bottom of the screen.
+//     The glass is a background layer only: text drawn inside a glass effect is
+//     composited through it and looked rough, so the glyphs sit on top of it
+//     and render as plain, crisply antialiased text.
 
 import SwiftUI
 import PrivoVoiceKit
 
 struct HUDView: View {
     @Bindable var appState: AppState
-    @Bindable var settings: AppSettings
     @Bindable var presentation: HUDPresentation
 
     var body: some View {
@@ -29,7 +27,6 @@ struct HUDView: View {
                                 paused: appState.phase != .listening)) { context in
             NotchIsland(
                 appState: appState,
-                showTranscript: settings.showLiveTranscription,
                 isOpen: presentation.isOpen,
                 notch: presentation.notch,
                 progress: RecordingProgress(start: appState.recordingStartDate,
@@ -50,7 +47,6 @@ struct HUDView: View {
 
 private struct NotchIsland: View {
     @Bindable var appState: AppState
-    let showTranscript: Bool
     let isOpen: Bool
     let notch: NotchMetrics
     let progress: RecordingProgress
@@ -59,25 +55,15 @@ private struct NotchIsland: View {
     private static let wingWidth: CGFloat = 84
     /// The concave "shoulders" where the island meets the top edge.
     private static let topRadius: CGFloat = 8
-    /// Fixed island width once the transcript body is showing.
-    private static let bodyWidth: CGFloat = 440
 
     private var isFinalizing: Bool {
         appState.phase == .transcribing || appState.phase == .polishing
     }
 
-    /// Expand below the top row only once there's something to show — words
-    /// (if live transcription is on) or a limit/minute note.
-    private var showsBody: Bool {
-        isOpen && ((showTranscript && !appState.partialText.isEmpty)
-                   || (!isFinalizing && progress.secondaryText != nil))
-    }
-
     private var rowHeight: CGFloat { max(notch.height, 28) }
 
     private var openWidth: CGFloat {
-        let compact = notch.width + 2 * Self.wingWidth + 2 * (Self.topRadius + 12)
-        return showsBody ? max(compact, Self.bodyWidth) : compact
+        notch.width + 2 * Self.wingWidth + 2 * (Self.topRadius + 12)
     }
 
     /// Collapsed: exactly the notch's silhouette, or a sliver at the top edge
@@ -89,19 +75,12 @@ private struct NotchIsland: View {
 
     private var shape: NotchShape {
         NotchShape(topRadius: isOpen ? Self.topRadius : 4,
-                   bottomRadius: !isOpen ? 10 : (showsBody ? 24 : rowHeight / 2))
+                   bottomRadius: isOpen ? rowHeight / 2 : 10)
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            topRow
-            if showsBody {
-                islandBody
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
-            }
-        }
+        topRow
         .padding(.horizontal, Self.topRadius + 12)
-        .padding(.bottom, showsBody ? 14 : 0)
         // Content fades in once the island has started to open, and out first
         // on close, so nothing spills past the shrinking shape.
         .opacity(isOpen ? 1 : 0)
@@ -114,9 +93,6 @@ private struct NotchIsland: View {
         // A soft glow in the status color that breathes with the voice.
         .shadow(color: glowColor, radius: 16, y: 6)
         .animation(.spring(response: 0.42, dampingFraction: 0.8), value: isOpen)
-        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: showsBody)
-        .animation(.smooth(duration: 0.25), value: appState.partialText)
-        .animation(.easeInOut(duration: 0.2), value: progress.secondaryText)
     }
 
     private var glowColor: Color {
@@ -157,33 +133,6 @@ private struct NotchIsland: View {
         }
         .frame(height: rowHeight)
     }
-
-    private var islandBody: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !isFinalizing, let note = progress.secondaryText {
-                Text(note)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(progress.secondaryColor)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .transition(.opacity)
-            }
-            if showTranscript && !appState.partialText.isEmpty {
-                // Only the most recent 50 words: the tail is sliced verbatim
-                // and prefixed with "…" once earlier words drop off, so the
-                // newest words hold a steady position. A single Text (no view
-                // swapping) so it never flashes at its ideal size for a frame.
-                Text(TranscriptWindow.lastWords(appState.partialText, maxWords: 50))
-                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(6)
-                    .truncationMode(.head)        // keep the latest words visible
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.top, 6)
-        .padding(.horizontal, 4)
-    }
 }
 
 /// The island's outline: flush with the top edge, with small concave
@@ -217,6 +166,99 @@ struct NotchShape: Shape {
                        control: CGPoint(x: rect.maxX - top, y: rect.minY))
         p.closeSubpath()
         return p
+    }
+}
+
+// MARK: - Transcript panel
+
+/// The live transcript in its own Liquid Glass panel, pinned to the top or
+/// bottom of the screen (Settings → transcript position). Slides in from that
+/// edge when dictation starts and out when it ends.
+struct TranscriptPanelView: View {
+    @Bindable var appState: AppState
+    @Bindable var presentation: HUDPresentation
+
+    private var edge: VerticalEdge { presentation.transcriptPosition == .bottom ? .bottom : .top }
+
+    var body: some View {
+        ZStack {
+            if presentation.showsTranscript {
+                TimelineView(.animation(minimumInterval: 1.0 / 15.0,
+                                        paused: appState.phase != .listening)) { context in
+                    TranscriptBox(
+                        appState: appState,
+                        progress: RecordingProgress(start: appState.recordingStartDate,
+                                                    limit: appState.recordingLimitSeconds,
+                                                    now: context.date))
+                }
+                .transition(.move(edge: edge == .top ? .top : .bottom).combined(with: .opacity))
+            }
+        }
+        .padding(14)
+        // Anchored to its screen edge in the panel's transparent canvas, so the
+        // box grows away from that edge as lines wrap.
+        .frame(maxWidth: .infinity, maxHeight: .infinity,
+               alignment: edge == .top ? .top : .bottom)
+        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: presentation.showsTranscript)
+    }
+}
+
+private struct TranscriptBox: View {
+    @Bindable var appState: AppState
+    let progress: RecordingProgress
+
+    private var isEmpty: Bool { appState.partialText.isEmpty }
+    private var isFinalizing: Bool {
+        appState.phase == .transcribing || appState.phase == .polishing
+    }
+    // Show only the most recent 50 words: the tail is sliced verbatim (original
+    // spacing/newlines) and prefixed with "…" once earlier words drop off, so the
+    // newest words hold a steady position instead of scrolling the whole caption.
+    private var displayText: String {
+        isEmpty ? placeholder : TranscriptWindow.lastWords(appState.partialText, maxWords: 50)
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            // The near/over-limit or minute-mark note — the notch only has
+            // room for the timer.
+            if !isFinalizing, let note = progress.secondaryText {
+                Text(note)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(progress.secondaryColor)
+                    .transition(.opacity)
+            }
+            // A SINGLE Text (not an if/else that swaps views): swapping views
+            // made the incoming transcript lay out at its ideal 2-line size for
+            // a frame before settling to one line. No .contentTransition either
+            // (it reflows wrapped captions). Height still animates smoothly.
+            Text(displayText)
+                .font(.system(size: 15, weight: .regular, design: .rounded))
+                .foregroundStyle(isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                .lineLimit(8)                    // grows with the text, up to a cap
+                .truncationMode(.head)           // keep the latest words visible
+                .frame(maxWidth: .infinity, alignment: isEmpty ? .center : .topLeading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        // No fixed/minimum height — start at one line and grow as text wraps.
+        .fixedSize(horizontal: false, vertical: true)
+        // Glass as a BACKGROUND layer, not around the text: the glyphs render
+        // on top of it as normal text instead of through the glass.
+        .background {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.clear)
+                .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
+        }
+        .animation(.smooth(duration: 0.25), value: appState.partialText)
+        .animation(.easeInOut(duration: 0.2), value: progress.secondaryText)
+    }
+
+    private var placeholder: String {
+        switch appState.phase {
+        case .transcribing, .polishing: return appState.phase.label
+        default: return "Listening… speak now"
+        }
     }
 }
 
@@ -276,59 +318,49 @@ private struct TranscribingIndicator: View {
 // MARK: - Previews
 
 #if DEBUG
-@MainActor private func hudPreview(_ appState: AppState, showTranscript: Bool = true,
+@MainActor private func hudPreview(_ appState: AppState,
+                                   position: TranscriptPosition = .top,
                                    notch: NotchMetrics = NotchMetrics(width: 185, height: 32, hasNotch: true))
     -> some View {
-    let settings = AppSettings(storeURL: FileManager.default.temporaryDirectory
-        .appending(path: "hud-preview-\(UUID().uuidString)/settings.json"))
-    settings.showLiveTranscription = showTranscript
     let presentation = HUDPresentation()
     presentation.notch = notch
     presentation.isOpen = true
-    return HUDView(appState: appState, settings: settings, presentation: presentation)
-        .frame(width: HUDController.size.width, height: 260)
-        .background(.gray.gradient)   // a stand-in desktop
+    presentation.showsTranscript = true
+    presentation.transcriptPosition = position
+    return ZStack(alignment: .top) {
+        TranscriptPanelView(appState: appState, presentation: presentation)
+        HUDView(appState: appState, presentation: presentation)
+    }
+    .frame(width: 560, height: 320)
+    .background(.gray.gradient)   // a stand-in desktop
 }
 
-#Preview("Listening · no words yet (compact)") {
+#Preview("Listening · no words yet") {
     hudPreview(.preview(phase: .listening, partialText: "", elapsed: 3, limitSeconds: 1440))
-}
-
-#Preview("Listening · short") {
-    hudPreview(.preview(
-        phase: .listening, partialText: "Add milk and eggs to the shopping list",
-        elapsed: 12, limitSeconds: 1440))
 }
 
 #Preview("Listening · long text (grows)") {
     hudPreview(.preview(
         phase: .listening,
         partialText: "This is a much longer dictation that wraps across several lines so you "
-            + "can see the island grow to fit however many lines the words currently "
-            + "need, instead of sitting at a fixed height the whole time.",
+            + "can see the panel grow to fit however many lines the words currently need.",
         elapsed: 47, limitSeconds: 1440))
 }
 
-#Preview("Near limit (amber note)") {
+#Preview("Transcript at the bottom") {
+    hudPreview(.preview(
+        phase: .listening, partialText: "Add milk and eggs to the shopping list",
+        elapsed: 12, limitSeconds: 1440), position: .bottom)
+}
+
+#Preview("Near limit") {
     hudPreview(.preview(
         phase: .listening, partialText: "Almost at the model's single-pass limit now",
         elapsed: 33, limitSeconds: 40))
 }
 
-#Preview("Over limit") {
-    hudPreview(.preview(
-        phase: .listening, partialText: "Past the window — still recording",
-        elapsed: 46, limitSeconds: 40))
-}
-
 #Preview("Transcribing") {
     hudPreview(.preview(phase: .transcribing, partialText: "Finalizing the transcript"))
-}
-
-#Preview("Live transcription OFF (compact)") {
-    hudPreview(.preview(
-        phase: .listening, partialText: "This text is hidden when the setting is off",
-        elapsed: 20, limitSeconds: 1440), showTranscript: false)
 }
 
 #Preview("No notch (external display)") {
