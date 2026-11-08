@@ -33,9 +33,16 @@ struct SettingsPane: View {
                     Text("Bottom of screen").tag(TranscriptPosition.bottom)
                 }
                 .disabled(!settings.showLiveTranscription)
+                Picker("Transcript glass", selection: $settings.transcriptGlass) {
+                    Text("Clear, white text").tag(TranscriptGlass.clear)
+                    Text("Adaptive, follows system").tag(TranscriptGlass.adaptive)
+                }
+                .disabled(!settings.showLiveTranscription)
                 Text("The recording status (level meter and timer) always shows in the notch. "
                      + "The live transcript appears in a separate glass panel under the menu bar "
-                     + "or above the Dock; when off, your words are still pasted when you finish.")
+                     + "or above the Dock; when off, your words are still pasted when you finish. "
+                     + "Adaptive glass follows System Settings → Appearance and switches its text "
+                     + "between black and white to suit what's behind it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

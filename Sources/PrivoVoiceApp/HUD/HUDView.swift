@@ -7,11 +7,12 @@
 //     amber/red as the model's single-pass limit approaches/passes. Black, not
 //     glass, so it merges with the physical notch; on a screen without one it
 //     hangs from the top edge the same way.
-//   • a separate Liquid Glass panel (`TranscriptPanelView`) with the live
-//     transcript (opt-out in Settings), at the top or bottom of the screen.
-//     The glass is a background layer only: text drawn inside a glass effect is
-//     composited through it and looked rough, so the glyphs sit on top of it
-//     and render as plain, crisply antialiased text.
+//   • the live transcript (`TranscriptPanelView`, opt-out in Settings) — the
+//     content of a separate panel at the top or bottom of the screen whose
+//     window IS the system's Liquid Glass (`NSGlassEffectView`, set up by
+//     `HUDController`, forced to its active look), so it samples the desktop
+//     like Control Center does.
+//     The text sits on the glass and renders as plain, crisply antialiased text.
 
 import SwiftUI
 import PrivoVoiceKit
@@ -171,41 +172,43 @@ struct NotchShape: Shape {
 
 // MARK: - Transcript panel
 
-/// The live transcript in its own Liquid Glass panel, pinned to the top or
-/// bottom of the screen (Settings → transcript position). Slides in from that
-/// edge when dictation starts and out when it ends.
+/// The live transcript, hosted inside the transcript panel's glass. Sized to
+/// its text at a fixed width; reports its height so `HUDController` can fit
+/// the glass window to it (growing away from its screen edge as lines wrap).
 struct TranscriptPanelView: View {
     @Bindable var appState: AppState
-    @Bindable var presentation: HUDPresentation
+    @Bindable var settings: AppSettings
+    /// The panel fell back to the dark blur material (no Liquid Glass), which
+    /// always needs white text.
+    var onDarkMaterial = false
+    let width: CGFloat
+    let onHeightChange: (CGFloat) -> Void
 
-    private var edge: VerticalEdge { presentation.transcriptPosition == .bottom ? .bottom : .top }
+    private var whiteText: Bool { onDarkMaterial || settings.transcriptGlass == .clear }
 
     var body: some View {
-        ZStack {
-            if presentation.showsTranscript {
-                TimelineView(.animation(minimumInterval: 1.0 / 15.0,
-                                        paused: appState.phase != .listening)) { context in
-                    TranscriptBox(
-                        appState: appState,
-                        progress: RecordingProgress(start: appState.recordingStartDate,
-                                                    limit: appState.recordingLimitSeconds,
-                                                    now: context.date))
-                }
-                .transition(.move(edge: edge == .top ? .top : .bottom).combined(with: .opacity))
-            }
+        TimelineView(.animation(minimumInterval: 1.0 / 15.0,
+                                paused: appState.phase != .listening)) { context in
+            TranscriptBox(
+                appState: appState,
+                progress: RecordingProgress(start: appState.recordingStartDate,
+                                            limit: appState.recordingLimitSeconds,
+                                            now: context.date),
+                whiteText: whiteText)
         }
-        .padding(14)
-        // Anchored to its screen edge in the panel's transparent canvas, so the
-        // box grows away from that edge as lines wrap.
-        .frame(maxWidth: .infinity, maxHeight: .infinity,
-               alignment: edge == .top ? .top : .bottom)
-        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: presentation.showsTranscript)
+        // White text on the dimmed clear glass: dark-scheme status colors.
+        .environment(\.colorScheme, whiteText ? .dark : .light)
+        .frame(width: width)
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onHeightChange($0) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
 private struct TranscriptBox: View {
     @Bindable var appState: AppState
     let progress: RecordingProgress
+    let whiteText: Bool
 
     private var isEmpty: Bool { appState.partialText.isEmpty }
     private var isFinalizing: Bool {
@@ -233,25 +236,29 @@ private struct TranscriptBox: View {
             // a frame before settling to one line. No .contentTransition either
             // (it reflows wrapped captions). Height still animates smoothly.
             Text(displayText)
-                .font(.system(size: 15, weight: .regular, design: .rounded))
-                .foregroundStyle(isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                .font(.system(size: 15, weight: .medium, design: .rounded))
+                .foregroundStyle(textColor)
+                .shadow(color: .black.opacity(whiteText ? 0.3 : 0), radius: 1, y: 0.5)
                 .lineLimit(8)                    // grows with the text, up to a cap
                 .truncationMode(.head)           // keep the latest words visible
                 .frame(maxWidth: .infinity, alignment: isEmpty ? .center : .topLeading)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
         // No fixed/minimum height — start at one line and grow as text wraps.
         .fixedSize(horizontal: false, vertical: true)
-        // Glass as a BACKGROUND layer, not around the text: the glyphs render
-        // on top of it as normal text instead of through the glass.
-        .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.clear)
-                .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-        }
         .animation(.smooth(duration: 0.25), value: appState.partialText)
         .animation(.easeInOut(duration: 0.2), value: progress.secondaryText)
+    }
+
+    /// Explicit colors, never `.primary`/`.secondary`: inside the glass those
+    /// hierarchical styles render as *vibrant* text, recolored pixel by pixel
+    /// from the backdrop — soft, speckled edges and a muddy color. Label
+    /// colors stay plain, crisp text yet still flip black/white with the
+    /// adaptive glass (it signals the flip through NSAppearance).
+    private var textColor: Color {
+        if whiteText { return .white.opacity(isEmpty ? 0.7 : 1) }
+        return Color(nsColor: isEmpty ? .secondaryLabelColor : .labelColor)
     }
 
     private var placeholder: String {
@@ -319,16 +326,19 @@ private struct TranscribingIndicator: View {
 
 #if DEBUG
 @MainActor private func hudPreview(_ appState: AppState,
-                                   position: TranscriptPosition = .top,
                                    notch: NotchMetrics = NotchMetrics(width: 185, height: 32, hasNotch: true))
     -> some View {
     let presentation = HUDPresentation()
     presentation.notch = notch
     presentation.isOpen = true
-    presentation.showsTranscript = true
-    presentation.transcriptPosition = position
     return ZStack(alignment: .top) {
-        TranscriptPanelView(appState: appState, presentation: presentation)
+        // The real panel's glass is AppKit's (see HUDController); a material
+        // stands in for it here.
+        TranscriptPanelView(appState: appState, settings: AppSettings(storeURL: .temporaryDirectory.appending(path: "hud-preview.json")),
+                            width: HUDController.transcriptWidth) { _ in }
+            .fixedSize()
+            .background(.regularMaterial, in: .rect(cornerRadius: HUDController.transcriptCornerRadius))
+            .padding(.top, 60)
         HUDView(appState: appState, presentation: presentation)
     }
     .frame(width: 560, height: 320)
@@ -345,12 +355,6 @@ private struct TranscribingIndicator: View {
         partialText: "This is a much longer dictation that wraps across several lines so you "
             + "can see the panel grow to fit however many lines the words currently need.",
         elapsed: 47, limitSeconds: 1440))
-}
-
-#Preview("Transcript at the bottom") {
-    hudPreview(.preview(
-        phase: .listening, partialText: "Add milk and eggs to the shopping list",
-        elapsed: 12, limitSeconds: 1440), position: .bottom)
 }
 
 #Preview("Near limit") {

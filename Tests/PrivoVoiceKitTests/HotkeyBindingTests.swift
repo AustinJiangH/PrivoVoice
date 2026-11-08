@@ -136,6 +136,16 @@ final class HotkeySettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testTranscriptGlassPersists() {
+        let store = tempStore()
+        let a = AppSettings(storeURL: store)
+        XCTAssertEqual(a.transcriptGlass, .clear)
+        a.transcriptGlass = .adaptive
+        a.saveNow()
+        XCTAssertEqual(AppSettings(storeURL: store).transcriptGlass, .adaptive)
+    }
+
+    @MainActor
     func testClearedPushToTalkStaysCleared() {
         let store = tempStore()
         let a = AppSettings(storeURL: store)

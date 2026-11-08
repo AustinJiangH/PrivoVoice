@@ -15,6 +15,17 @@ public enum TranscriptPosition: String, Sendable, Codable, CaseIterable {
     case bottom
 }
 
+/// How the live-transcript panel's Liquid Glass looks.
+public enum TranscriptGlass: String, Sendable, Codable, CaseIterable {
+    /// See-through clear glass, dimmed slightly, with white text — reads the
+    /// same over any background.
+    case clear
+    /// The system's standard glass: follows System Settings → Appearance →
+    /// Liquid Glass, and flips its text between black and white to suit what's
+    /// behind it.
+    case adaptive
+}
+
 @MainActor
 @Observable
 public final class AppSettings {
@@ -100,6 +111,10 @@ public final class AppSettings {
     public var transcriptPosition: TranscriptPosition {
         didSet { scheduleSave() }
     }
+    /// The transcript panel's glass style. Default clear.
+    public var transcriptGlass: TranscriptGlass {
+        didSet { scheduleSave() }
+    }
     /// Whether the first-run onboarding flow has been completed (or skipped). Once
     /// true the flow never shows again. Default false so a fresh install onboards.
     public var hasCompletedOnboarding: Bool {
@@ -150,6 +165,7 @@ public final class AppSettings {
             self.telemetryEnabled = persisted.telemetryEnabled ?? false
             self.showLiveTranscription = persisted.showLiveTranscription ?? true
             self.transcriptPosition = persisted.transcriptPosition ?? .top
+            self.transcriptGlass = persisted.transcriptGlass ?? .clear
             self.hasCompletedOnboarding = persisted.hasCompletedOnboarding ?? false
         } else {
             self.modelsDirectory = Self.defaultModelsDirectory
@@ -169,6 +185,7 @@ public final class AppSettings {
             self.telemetryEnabled = false
             self.showLiveTranscription = true
             self.transcriptPosition = .top
+            self.transcriptGlass = .clear
             self.hasCompletedOnboarding = false
         }
 
@@ -234,6 +251,7 @@ public final class AppSettings {
             telemetryEnabled: telemetryEnabled,
             showLiveTranscription: showLiveTranscription,
             transcriptPosition: transcriptPosition,
+            transcriptGlass: transcriptGlass,
             hasCompletedOnboarding: hasCompletedOnboarding
         )
         try? snapshot.save(to: storeURL)
@@ -261,6 +279,7 @@ public final class AppSettings {
         var telemetryEnabled: Bool?
         var showLiveTranscription: Bool?
         var transcriptPosition: TranscriptPosition?
+        var transcriptGlass: TranscriptGlass?
         var hasCompletedOnboarding: Bool?
 
         static func load(from url: URL) throws -> Persisted {
