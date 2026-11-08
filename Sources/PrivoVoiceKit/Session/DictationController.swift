@@ -10,6 +10,7 @@ import AVFoundation
 import Foundation
 import Observation
 import VoixfulEngine
+import VoixfulSpeech
 
 @MainActor
 @Observable
@@ -44,6 +45,8 @@ public final class DictationController {
         /// Sample rate of the mono stream we feed the engine — used to convert
         /// the frames fed into a duration for the usage total.
         let sampleRate: Double
+        /// The model this session transcribes with (marked warm once it ends).
+        var modelPath = ""
         var run: Task<Void, Never>?
         /// Total mono samples forwarded this utterance; frames ÷ sampleRate is
         /// the transcribed audio length.
@@ -64,6 +67,12 @@ public final class DictationController {
     /// cancel during the finalize/polish window drops that utterance instead
     /// of letting a late commit/paste overlap the next session.
     private var sessionEpoch = 0
+    /// The model the engine has already loaded (a session or warm-up with it
+    /// finished), so a session with it won't pay the cold load.
+    private var warmModelPath: String?
+    /// A background warm-up in flight (`warmUpModel`). A session that starts
+    /// meanwhile opens the mic at once and begins after it.
+    private var warmTask: Task<Void, Never>?
     /// Model path (+ options) the engine was last asked to pre-warm the
     /// formatter for — debounces `warmFormatterIfNeeded` (re-warming is
     /// harmless but pointless). Cleared by `unloadFormatterIfIdle()` so a
@@ -123,14 +132,34 @@ public final class DictationController {
 
         appState.lastError = nil
         appState.startRecordingClock(limitSeconds: spec.maxAudioSeconds)
+        appState.setModelWarming(url.path != warmModelPath)
         appState.setPhase(.listening)
 
         let session = Session(capture: capture, sampleRate: format.sampleRate)
+        session.modelPath = url.path
         active = session
         let engine = self.engine
         let appState = self.appState
+        let pendingWarm = warmTask
 
         session.run = Task { @MainActor in
+            // The model is still warming up in the background: open the mic now
+            // (the stream buffers) so nothing said meanwhile is lost, then begin
+            // once the engine is free — it takes one utterance at a time.
+            var earlyStream: AsyncStream<AnalyzerInput>?
+            if let pendingWarm {
+                let stream = capture.makeStream()
+                do {
+                    try capture.start()
+                } catch {
+                    appState.lastError = "\(error)"
+                    return
+                }
+                earlyStream = stream
+                await pendingWarm.value
+                // Cancelled while waiting: never begin an engine session nobody ends.
+                if Task.isCancelled { capture.stop(); return }
+            }
             do {
                 try await engine.begin(
                     modelURL: url, backend: spec.backend, locale: locale, format: format,
@@ -139,24 +168,39 @@ public final class DictationController {
                         // notice — it's status, not transcript, and its length
                         // briefly expanded the live box. Filtered here so the
                         // engine stays untouched.
-                        guard !Self.isStatusPartial(text) else { return }
-                        Task { @MainActor in appState.setPartial(text) }
+                        // (It does mean the model is loading, though.)
+                        if Self.isStatusPartial(text) {
+                            Task { @MainActor in appState.setModelWarming(true) }
+                            return
+                        }
+                        // Real words: the model is up.
+                        Task { @MainActor in
+                            appState.setModelWarming(false)
+                            appState.setPartial(text)
+                        }
                     })
             } catch {
+                if earlyStream != nil { capture.stop() }
                 appState.lastError = "Could not start \(spec.displayName): \(error)"
                 return
             }
-            // A very quick tap may have already released before the mic opened —
-            // signalled by `stopRequested` (NOT Task cancellation, which would make
-            // the AsyncStream below drop its buffered tail).
-            if session.stopRequested { return }
 
-            let stream = capture.makeStream()
-            do {
-                try capture.start()
-            } catch {
-                appState.lastError = "\(error)"
-                return
+            let stream: AsyncStream<AnalyzerInput>
+            if let earlyStream {
+                // Already capturing — feed what was buffered, even if released.
+                stream = earlyStream
+            } else {
+                // A very quick tap may have already released before the mic
+                // opened — signalled by `stopRequested` (NOT Task cancellation,
+                // which would make the AsyncStream below drop its buffered tail).
+                if session.stopRequested { return }
+                stream = capture.makeStream()
+                do {
+                    try capture.start()
+                } catch {
+                    appState.lastError = "\(error)"
+                    return
+                }
             }
 
             // Forward mic audio until the stream ends. stop() finishes the stream
@@ -188,8 +232,10 @@ public final class DictationController {
         let epoch = sessionEpoch
         Task { @MainActor in
             _ = await session.run?.value          // let forwarding drain
-            let raw = ((try? await engine.end()) ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let ended = try? await engine.end()
+            if ended != nil { warmModelPath = session.modelPath }
+            appState.setModelWarming(false)
+            let raw = (ended ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             // Optionally polish the final transcript through the formatter LLM.
             // Best-effort with a hard timeout: any failure delivers the raw
             // transcript. The RAW text still drives telemetry below.
@@ -341,11 +387,38 @@ public final class DictationController {
         }
         let engine = self.engine
         Task { await engine.cancel() }
+        appState.setModelWarming(false)
         appState.setPhase(.idle)
         appState.reset()
         // `finalizing` just cleared without the stop-task's completion path —
         // this is the cancelled session's end-of-session residency retry.
         syncResidencyAfterSession()
+    }
+
+    /// Load the selected speech model in the background (at launch, or when
+    /// the selection / installed models change) so the first dictation
+    /// doesn't pay the cold load: a silent throwaway utterance through the
+    /// engine. No-op while dictating, already warm, or already warming.
+    public func warmUpModel() {
+        guard active == nil, !finalizing, warmTask == nil,
+              let (spec, url) = resolveModel(), url.path != warmModelPath else { return }
+        let engine = self.engine
+        let locale = Locale(identifier: settings.localeIdentifier)
+        let sampleRate = 16_000.0
+        warmTask = Task { @MainActor in
+            defer { warmTask = nil }
+            do {
+                try await engine.begin(
+                    modelURL: url, backend: spec.backend, locale: locale,
+                    format: AudioStreamFormat(sampleRate: sampleRate, channels: 1),
+                    onPartial: { _ in })
+                await engine.feed([Float](repeating: 0, count: Int(sampleRate / 2)))
+                _ = try await engine.end()
+                warmModelPath = url.path
+            } catch {
+                // Best-effort: the first real dictation cold-loads as before.
+            }
+        }
     }
 
     // MARK: Helpers

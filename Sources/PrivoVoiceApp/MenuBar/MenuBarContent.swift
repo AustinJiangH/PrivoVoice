@@ -24,7 +24,7 @@ struct MenuBarContent: View {
         Divider()
 
         // Informational, non-interactive: live status + the model in use.
-        Label(env.appState.phase.label, systemImage: env.appState.phase.menuBarSymbol)
+        Label(env.appState.statusLabel, systemImage: env.appState.phase.menuBarSymbol)
             .disabled(true)
         if let spec = selectedSpec {
             Text("Model: \(spec.displayName)")

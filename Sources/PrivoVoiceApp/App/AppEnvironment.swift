@@ -55,6 +55,22 @@ final class AppEnvironment {
         // completing) so the first formatted dictation doesn't pay the ~2 s
         // cold model load; unload (~1 GB freed) when either side goes away.
         syncFormatterResidency()
+        // Load the speech model in the background too, so the first dictation
+        // after launch (or after picking another model) doesn't stall on it.
+        warmSpeechModel()
+    }
+
+    /// Warm the selected speech model now and whenever the selection or the
+    /// set of installed models changes (re-armed per change). Debounced in
+    /// the controller: a no-op once that model is warm.
+    private func warmSpeechModel() {
+        dictation.warmUpModel()
+        withObservationTracking {
+            _ = settings.selectedModelID
+            _ = store.installedIDs
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.warmSpeechModel() }
+        }
     }
 
     /// Fire exactly one residency trigger for the current state — warm when

@@ -118,7 +118,8 @@ private struct NotchIsland: View {
 
             Group {
                 if isFinalizing {
-                    Text(appState.phase == .polishing ? "Polishing" : "Transcribing")
+                    Text(appState.phase == .polishing ? "Polishing"
+                         : appState.isModelWarming ? "Warming up" : "Transcribing")
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.7))
                 } else {
@@ -263,8 +264,9 @@ private struct TranscriptBox: View {
 
     private var placeholder: String {
         switch appState.phase {
-        case .transcribing, .polishing: return appState.phase.label
-        default: return "Listening… speak now"
+        case .transcribing, .polishing: return appState.statusLabel
+        default:
+            return appState.isModelWarming ? "Warming up the model… keep speaking" : "Listening… speak now"
         }
     }
 }

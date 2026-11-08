@@ -50,6 +50,10 @@ public final class AppState {
 
     /// The global push-to-talk hotkey is registered with the system.
     public private(set) var hotkeyActive = false
+    /// The speech model is still loading (first use after launch or after
+    /// switching models). Status surfaces say "Warming up model…" instead of
+    /// a misleading "Transcribing…" while this is set.
+    public private(set) var isModelWarming = false
     /// Accessibility is granted — needed only to paste the transcript.
     public private(set) var pasteAuthorized = false
 
@@ -60,6 +64,12 @@ public final class AppState {
 
     // Mutators are funnelled through the controller; kept internal to the module.
     func setPhase(_ p: DictationPhase) { phase = p }
+    func setModelWarming(_ v: Bool) { isModelWarming = v }
+    /// The phase label, except "Warming up model…" while a released
+    /// utterance is really waiting on the model to load.
+    public var statusLabel: String {
+        isModelWarming && phase == .transcribing ? "Warming up model…" : phase.label
+    }
     func setLevel(_ l: Float) { level = l }
     func setPartial(_ t: String) { partialText = t }
     func commitTranscript(_ t: String) { lastTranscript = t; partialText = "" }

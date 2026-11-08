@@ -116,6 +116,45 @@ final class DictationControllerTests: XCTestCase {
         }
     }
 
+    // Warm-up runs one silent utterance, once per model, and marks it warm.
+    @MainActor
+    func testWarmUpLoadsModelOnceAndMarksItWarm() async throws {
+        let engine = MockEngine()
+        let box = CaptureBox()
+        let (controller, appState) = try makeController(engine: engine, makeCapture: box.factory())
+        controller.warmUpModel()
+        await waitUntil { await engine.endCount == 1 }
+        let fed = await engine.fedSamples
+        XCTAssertGreaterThan(fed, 0, "warm-up feeds silence so the model actually loads")
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        controller.warmUpModel()   // already warm → no second warm-up
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let begins = await engine.beginCount
+        XCTAssertEqual(begins, 1)
+        controller.start()
+        XCTAssertFalse(appState.isModelWarming, "a warm model doesn't show the warming status")
+        controller.cancel()
+    }
+
+    // A press during warm-up waits for it (one utterance at a time) and still
+    // delivers its own transcript.
+    @MainActor
+    func testStartDuringWarmUpBeginsAfterIt() async throws {
+        let engine = MockEngine()
+        let box = CaptureBox()
+        let (controller, appState) = try makeController(engine: engine, makeCapture: box.factory())
+        controller.warmUpModel()
+        controller.start()
+        XCTAssertTrue(appState.isModelWarming)
+        await waitUntil { await engine.beginCount == 2 }
+        controller.stop()
+        await waitUntil { appState.phase == .idle }
+        XCTAssertEqual(appState.lastTranscript, " Hello.")
+        let ends = await engine.endCount
+        XCTAssertEqual(ends, 2)
+        XCTAssertFalse(appState.isModelWarming)
+    }
+
     // T1.6 — model gating (no mic needed; returns before capture).
     @MainActor
     func testStartRequiresInstalledModel() throws {

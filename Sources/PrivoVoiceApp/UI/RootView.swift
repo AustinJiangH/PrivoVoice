@@ -91,7 +91,7 @@ private struct StatusFooter: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Circle().fill(env.appState.phase.statusColor).frame(width: 8, height: 8)
-                Text(env.appState.phase.label)
+                Text(env.appState.statusLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
