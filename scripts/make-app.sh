@@ -75,15 +75,26 @@ for bundle in "$BIN_DIR"/*.bundle; do
     cp -R "$bundle" "$APP/Contents/Resources/$(basename "$bundle")"
 done
 
-# App icon (pre-rendered .icns, generated from the 1024px brand icon). Dev
-# builds get a "DEV" banner stamped on it; fall back to the plain icon if that
-# fails (cosmetic only).
-if [ "$FLAVOR" = dev ] && swift "$ROOT/scripts/dev-icon.swift" \
-        "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null; then
-    :
+# App icon: an Icon Composer document (Resources/AppIcon.icon, full-bleed
+# artwork) compiled by actool into Assets.car + AppIcon.icns. Through
+# CFBundleIconName macOS applies its own icon shape; a pre-rendered .icns with
+# its own rounded corners is treated as a legacy icon and shrunk onto a grey
+# plate. Dev builds get a "DEV" banner stamped on the artwork first. Falls back
+# to the plain pre-rendered .icns if any of that fails (cosmetic only).
+ICON_SRC="$ROOT/Resources/AppIcon.icon"
+ICON_TMP="$(mktemp -d)/AppIcon.icon"
+if [ "$FLAVOR" = dev ] && swift "$ROOT/scripts/dev-icon.swift" "$ICON_SRC" "$ICON_TMP" 2>/dev/null; then
+    ICON_SRC="$ICON_TMP"
+fi
+if xcrun actool "$ICON_SRC" --compile "$APP/Contents/Resources" --platform macosx \
+        --minimum-deployment-target 27.0 --app-icon AppIcon \
+        --output-partial-info-plist "$(dirname "$ICON_TMP")/icon-info.plist" >/dev/null 2>&1; then
+    echo "[make-app] app icon compiled (Icon Composer → Assets.car)."
 else
+    echo "[make-app] WARNING: actool failed — using the pre-rendered icon (shows on a plate)."
     cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 fi
+rm -rf "$(dirname "$ICON_TMP")"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -96,6 +107,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key><string>PrivoVoice</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleIconName</key><string>AppIcon</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>27.0</string>
