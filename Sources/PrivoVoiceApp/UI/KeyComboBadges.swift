@@ -15,7 +15,7 @@ struct KeyComboBadges: View {
         let tokens = combo.badgeComponents
         HStack(spacing: 5) {
             if tokens.isEmpty {
-                cap("Not set", muted: true)
+                KeyCap(text: "Not set", muted: true)
             } else {
                 ForEach(Array(tokens.enumerated()), id: \.offset) { index, token in
                     if index > 0 {
@@ -23,14 +23,20 @@ struct KeyComboBadges: View {
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.tertiary)
                     }
-                    cap(token, muted: false)
+                    KeyCap(text: token, muted: false)
                 }
             }
         }
     }
+}
 
-    /// One rounded, monospaced key cap with a subtle fill and hairline border.
-    private func cap(_ text: String, muted: Bool) -> some View {
+/// One rounded, monospaced key cap with a subtle fill and hairline border.
+/// Shared by the keyboard and mouse binding badges.
+struct KeyCap: View {
+    let text: String
+    let muted: Bool
+
+    var body: some View {
         Text(text)
             .font(.caption.monospaced().weight(.medium))
             .foregroundStyle(muted ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))

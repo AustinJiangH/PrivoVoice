@@ -92,6 +92,12 @@ public final class AppSettings {
         didSet { scheduleSave() }
     }
 
+    /// Whether at least one dictation trigger (keyboard or mouse) is bound.
+    public var hasAnyTrigger: Bool {
+        !hotkey.isEmpty || !toggleHotkey.isEmpty
+            || mousePushToTalkButton != nil || mouseToggleButton != nil
+    }
+
     private var saveScheduled = false
     private let storeURL: URL
 
@@ -154,8 +160,9 @@ public final class AppSettings {
 
         // Guard against an unsafe shortcut (e.g. a bare key from an older build)
         // that the consuming tap would swallow system-wide. Property observers
-        // don't fire during init, so persist explicitly.
-        // An empty chord is a deliberate "unset" (every binding is optional).
+        // don't fire during init, so persist explicitly. An empty push-to-talk
+        // is a deliberate "unset" as long as another trigger is bound; with
+        // nothing bound at all there'd be no way to dictate, so restore `fn`.
         var healed = false
         if !hotkey.isEmpty, !hotkey.isValidGlobalShortcut {
             hotkey = .defaultCombo
@@ -175,6 +182,10 @@ public final class AppSettings {
         }
         if let b = mouseToggleButton, !b.isAssignable || b == mousePushToTalkButton {
             mouseToggleButton = nil
+            healed = true
+        }
+        if !hasAnyTrigger {
+            hotkey = .defaultCombo
             healed = true
         }
         if healed { saveNow() }

@@ -107,6 +107,17 @@ final class HotkeySettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testNoTriggersAtAllRestoresDefaultPushToTalk() {
+        let store = tempStore()
+        let a = AppSettings(storeURL: store)
+        a.hotkey = .unset   // e.g. cleared during onboarding
+        XCTAssertFalse(a.hasAnyTrigger)
+        a.saveNow()
+
+        XCTAssertEqual(AppSettings(storeURL: store).hotkey, .defaultCombo)
+    }
+
+    @MainActor
     func testConflictingAndInvalidBindingsHealOnLoad() {
         let store = tempStore()
         let a = AppSettings(storeURL: store)

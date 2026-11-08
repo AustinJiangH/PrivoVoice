@@ -15,6 +15,7 @@
 
 import AppKit
 import CoreGraphics
+import Observation
 import PrivoVoiceKit
 
 @MainActor
@@ -34,10 +35,16 @@ final class HotkeyMonitor {
     var isRecording: (@MainActor () -> Bool)?
     var onPermissionChange: (@MainActor () -> Void)?
 
-    /// Set while a shortcut recorder in the UI is capturing, so pressing an
-    /// existing binding records it instead of starting dictation (and isn't
-    /// swallowed before the recorder sees it).
-    static var isSuspended = false
+    /// Number of shortcut recorders in the UI currently capturing. While any
+    /// are, new presses pass through so pressing an existing binding records
+    /// it instead of starting dictation (and isn't swallowed before the
+    /// recorder sees it). Releases are still tracked so a trigger held when
+    /// recording began can't strand a session. A count, not a flag, so two
+    /// recorders can't re-enable each other's suspension.
+    private static var suspendCount = 0
+    static var isSuspended: Bool { suspendCount > 0 }
+    static func suspend() { suspendCount += 1 }
+    static func resume() { suspendCount = max(0, suspendCount - 1) }
 
     private let settings: AppSettings
     private var tap: CFMachPort?
@@ -52,6 +59,15 @@ final class HotkeyMonitor {
     /// The push-to-talk trigger that owns the live session (its release
     /// stops it), or `nil` for a toggle-started session.
     private var holdOwner: Trigger?
+    /// A modifier-only toggle chord is a *tap*: it fires on release, and only
+    /// if nothing else was pressed while it was held — so fn+← or ⌃⌥⌘T don't
+    /// latch an open mic.
+    private var modifierToggleDown = false
+    private var modifierToggleClean = false
+    /// Whether the installed tap listens to extra mouse buttons. Only true
+    /// while a mouse binding exists, so middle/side-button drags system-wide
+    /// don't route through our main-thread callback for nothing.
+    private var tapHasMouse = false
 
     /// Tap installed — implies Accessibility is granted (which also enables paste).
     private(set) var isActive = false
@@ -60,6 +76,28 @@ final class HotkeyMonitor {
 
     init(settings: AppSettings) {
         self.settings = settings
+        observeMouseBindings()
+    }
+
+    private var wantsMouse: Bool {
+        settings.mousePushToTalkButton != nil || settings.mouseToggleButton != nil
+    }
+
+    /// Reinstall the tap with/without the mouse events when the mouse bindings
+    /// are set or cleared (Observation fires once per change, so re-arm).
+    private func observeMouseBindings() {
+        withObservationTracking {
+            _ = wantsMouse
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.tap != nil, self.wantsMouse != self.tapHasMouse {
+                    self.removeTap()
+                    self.installTap()
+                }
+                self.observeMouseBindings()
+            }
+        }
     }
 
     func start() {
@@ -93,13 +131,16 @@ final class HotkeyMonitor {
         // A consuming tap needs the process trusted for Accessibility.
         guard AXIsProcessTrusted() else { isActive = false; return }
 
-        let mask: CGEventMask =
+        let withMouse = wantsMouse
+        var mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.keyUp.rawValue) |
-            (1 << CGEventType.flagsChanged.rawValue) |
-            (1 << CGEventType.otherMouseDown.rawValue) |
-            (1 << CGEventType.otherMouseUp.rawValue) |
-            (1 << CGEventType.otherMouseDragged.rawValue)
+            (1 << CGEventType.flagsChanged.rawValue)
+        if withMouse {
+            mask |= (1 << CGEventType.otherMouseDown.rawValue) |
+                (1 << CGEventType.otherMouseUp.rawValue) |
+                (1 << CGEventType.otherMouseDragged.rawValue)
+        }
 
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
@@ -127,6 +168,7 @@ final class HotkeyMonitor {
         self.source = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        tapHasMouse = withMouse
         isActive = true
     }
 
@@ -167,8 +209,6 @@ final class HotkeyMonitor {
             releaseAll()
             return false
         }
-        guard !Self.isSuspended else { return false }
-
         switch type {
         case .otherMouseDown, .otherMouseUp, .otherMouseDragged:
             return handleMouse(type: type, event: event)
@@ -180,20 +220,32 @@ final class HotkeyMonitor {
     private func handleKey(type: CGEventType, event: CGEvent) -> Bool {
         let flags = event.flags
         let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        // Auto-repeat is never a fresh press — even if `held` was reset by a
+        // tap timeout while the key stayed down.
+        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        if type == .keyDown { modifierToggleClean = false }
+
+        // Never let the toggle chord fire alongside the push-to-talk chord it
+        // collides with (the UI refuses this; guard any other writer too).
+        let toggle = settings.toggleHotkey.conflicts(with: settings.hotkey)
+            ? KeyCombo.unset : settings.toggleHotkey
         var consume = false
 
         for (trigger, combo) in [(Trigger.keyboardPushToTalk, settings.hotkey),
-                                 (Trigger.keyboardToggle, settings.toggleHotkey)] {
+                                 (Trigger.keyboardToggle, toggle)] {
             guard !combo.isEmpty, combo.isValidGlobalShortcut else { continue }
 
             if combo.isModifierOnly {
-                // fn / modifier-only: fire on the modifier engaging/disengaging.
-                // Use a subset (not exact) test so tapping another modifier while
-                // the trigger is held doesn't spuriously stop/restart. Don't
-                // consume — modifiers don't type, and swallowing flagsChanged
-                // would corrupt global modifier state.
-                if type == .flagsChanged {
-                    setHeld(trigger, flags.contains(requiredFlags(combo.modifiers)))
+                // fn / modifier-only. Don't consume — modifiers don't type, and
+                // swallowing flagsChanged would corrupt global modifier state.
+                guard type == .flagsChanged else { continue }
+                // Subset (not exact) test so tapping another modifier while the
+                // trigger is held doesn't spuriously stop/restart.
+                let engaged = flags.contains(requiredFlags(combo.modifiers))
+                if trigger.isToggle {
+                    handleModifierToggle(engaged: engaged, flags: flags, combo: combo)
+                } else if !engaged || !Self.isSuspended {
+                    setHeld(trigger, engaged)
                 }
                 continue
             }
@@ -201,10 +253,10 @@ final class HotkeyMonitor {
             guard let keyCode = combo.keyCode, code == keyCode else { continue }
             switch type {
             case .keyDown:
-                // Auto-repeat of a held trigger: swallow it, don't re-fire.
-                if held.contains(trigger) {
-                    consume = true
-                } else if satisfies(flags, combo.modifiers) {
+                if held.contains(trigger) || isRepeat {
+                    // Swallow the repeat of a trigger we own; don't re-fire.
+                    consume = held.contains(trigger)
+                } else if !Self.isSuspended, satisfies(flags, combo.modifiers) {
                     setHeld(trigger, true)
                     consume = true   // CONSUME → the trigger key doesn't type
                 }
@@ -220,15 +272,42 @@ final class HotkeyMonitor {
         return consume
     }
 
+    /// Fire a modifier-only toggle on a clean tap: engaged, then released with
+    /// no key pressed and no extra ⌘⌥⌃⇧ added in between.
+    private func handleModifierToggle(engaged: Bool, flags: CGEventFlags, combo: KeyCombo) {
+        let chord: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
+        let required = requiredFlags(combo.modifiers)
+        if engaged {
+            if !modifierToggleDown {
+                modifierToggleDown = true
+                modifierToggleClean = true
+            }
+            if !flags.intersection(chord).subtracting(required).isEmpty {
+                modifierToggleClean = false
+            }
+        } else if modifierToggleDown {
+            modifierToggleDown = false
+            if modifierToggleClean, !Self.isSuspended {
+                setHeld(.keyboardToggle, true)
+                setHeld(.keyboardToggle, false)
+            }
+        }
+    }
+
     private func handleMouse(type: CGEventType, event: CGEvent) -> Bool {
         let number = Int(event.getIntegerValueField(.mouseEventButtonNumber))
         var consume = false
 
-        for (trigger, button) in [(Trigger.mousePushToTalk, settings.mousePushToTalkButton),
-                                  (Trigger.mouseToggle, settings.mouseToggleButton)] {
+        // As with the keyboard pair, a toggle sharing the push-to-talk button
+        // is ignored rather than firing both at once.
+        let ptt = settings.mousePushToTalkButton
+        let toggle = settings.mouseToggleButton == ptt ? nil : settings.mouseToggleButton
+
+        for (trigger, button) in [(Trigger.mousePushToTalk, ptt), (Trigger.mouseToggle, toggle)] {
             guard let button, button.isAssignable, button.number == number else { continue }
             switch type {
             case .otherMouseDown:
+                guard !Self.isSuspended else { continue }
                 setHeld(trigger, true)
                 consume = true
             case .otherMouseUp:
@@ -299,6 +378,7 @@ final class HotkeyMonitor {
     private func releaseAll() {
         if holdOwner != nil { endSession() }
         held.removeAll()
+        modifierToggleDown = false
     }
 
     /// Exact-match the ⌘⌥⌃⇧ modifiers (so extra held modifiers don't over-trigger)

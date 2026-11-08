@@ -105,7 +105,7 @@ struct SettingsPane: View {
             LabeledContent("Push-to-talk") {
                 VStack(alignment: .trailing, spacing: 6) {
                     ShortcutRecorderView(combo: $settings.hotkey,
-                                         conflict: settings.toggleHotkey,
+                                         conflict: $settings.toggleHotkey,
                                          conflictName: "Toggle recording")
                     HStack(spacing: 6) {
                         Text("Presets:").font(.caption2).foregroundStyle(.secondary)
@@ -117,7 +117,7 @@ struct SettingsPane: View {
             }
             LabeledContent("Toggle recording") {
                 ShortcutRecorderView(combo: $settings.toggleHotkey,
-                                     conflict: settings.hotkey,
+                                     conflict: $settings.hotkey,
                                      conflictName: "Push-to-talk")
             }
             Text("Push-to-talk: hold to record, release to transcribe and paste. Toggle "
@@ -129,12 +129,12 @@ struct SettingsPane: View {
 
             LabeledContent("Mouse push-to-talk") {
                 MouseButtonRecorderView(button: $settings.mousePushToTalkButton,
-                                        conflict: settings.mouseToggleButton,
+                                        conflict: $settings.mouseToggleButton,
                                         conflictName: "Mouse toggle recording")
             }
             LabeledContent("Mouse toggle recording") {
                 MouseButtonRecorderView(button: $settings.mouseToggleButton,
-                                        conflict: settings.mousePushToTalkButton,
+                                        conflict: $settings.mousePushToTalkButton,
                                         conflictName: "Mouse push-to-talk")
             }
             Text("Optional. Bind your mouse's side (back/forward) or middle button — click "
@@ -143,23 +143,27 @@ struct SettingsPane: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-                LabeledContent("Hotkey") {
+            LabeledContent("Hotkeys") {
+                if !settings.hasAnyTrigger {
+                    statusRow(ok: false, okText: "", badText: "None set")
+                } else {
                     statusRow(ok: env.appState.hotkeyActive,
                               okText: "Active", badText: "Inactive")
                 }
-                LabeledContent("Accessibility") {
-                    HStack(spacing: 6) {
-                        statusRow(ok: env.appState.pasteAuthorized,
-                                  okText: "Granted", badText: "Not granted")
-                        if !env.appState.pasteAuthorized {
-                            Button("Open Accessibility") { openPrivacy("Privacy_Accessibility") }
-                        }
+            }
+            LabeledContent("Accessibility") {
+                HStack(spacing: 6) {
+                    statusRow(ok: env.appState.pasteAuthorized,
+                              okText: "Granted", badText: "Not granted")
+                    if !env.appState.pasteAuthorized {
+                        Button("Open Accessibility") { openPrivacy("Privacy_Accessibility") }
                     }
                 }
-                Text("Accessibility powers the hotkeys (keyboard and mouse) and pasting. "
-                     + "No Input Monitoring is needed.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            }
+            Text("Accessibility powers the hotkeys (keyboard and mouse) and pasting. "
+                 + "No Input Monitoring is needed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

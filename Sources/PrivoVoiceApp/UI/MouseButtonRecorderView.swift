@@ -12,8 +12,9 @@ import PrivoVoiceKit
 
 struct MouseButtonRecorderView: View {
     @Binding var button: MouseButton?
-    /// The other mouse binding this one must not reuse.
-    var conflict: MouseButton?
+    /// The other mouse binding this one must not reuse — a binding so the
+    /// check reads it live (see `ShortcutRecorderView.conflict`).
+    var conflict: Binding<MouseButton?> = .constant(nil)
     /// What `conflict` is called, for the rejection note.
     var conflictName: String = "another action"
 
@@ -60,6 +61,10 @@ struct MouseButtonRecorderView: View {
             }
         }
         .onDisappear(perform: stop)
+        // Switching away mid-record would otherwise leave every global
+        // trigger suspended until the user comes back and presses Esc.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didResignActiveNotification)) { _ in stop() }
     }
 
     private func toggle() {
@@ -71,7 +76,7 @@ struct MouseButtonRecorderView: View {
         rejection = nil
         // Let an already-bound button reach this window instead of firing
         // dictation (the tap would otherwise swallow it).
-        HotkeyMonitor.isSuspended = true
+        HotkeyMonitor.suspend()
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown, .keyDown]) { event in
             handle(event)
             return nil   // swallow while recording
@@ -79,7 +84,7 @@ struct MouseButtonRecorderView: View {
     }
 
     private func stop() {
-        if recording { HotkeyMonitor.isSuspended = false }
+        if recording { HotkeyMonitor.resume() }
         recording = false
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
@@ -92,7 +97,7 @@ struct MouseButtonRecorderView: View {
         case .otherMouseDown:
             let candidate = MouseButton(number: event.buttonNumber)
             guard candidate.isAssignable else { return }
-            if candidate == conflict {
+            if candidate == conflict.wrappedValue {
                 rejection = "Already used by \(conflictName) — pick a different button."
                 return
             }
@@ -105,22 +110,12 @@ struct MouseButtonRecorderView: View {
     }
 }
 
-/// A single key-cap style badge naming the bound mouse button (or "Not set"),
+/// A single key-cap badge naming the bound mouse button (or "Not set"),
 /// matching `KeyComboBadges`.
 struct MouseButtonBadge: View {
     let button: MouseButton?
 
     var body: some View {
-        Text(button?.displayName ?? "Not set")
-            .font(.caption.monospaced().weight(.medium))
-            .foregroundStyle(button == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(.quaternary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(Color.secondary.opacity(0.22), lineWidth: 1)))
+        KeyCap(text: button?.displayName ?? "Not set", muted: button == nil)
     }
 }

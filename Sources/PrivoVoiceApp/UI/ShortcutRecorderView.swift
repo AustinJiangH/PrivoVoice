@@ -14,8 +14,10 @@ import PrivoVoiceKit
 
 struct ShortcutRecorderView: View {
     @Binding var combo: KeyCombo
-    /// The other keyboard binding this one must not collide with.
-    var conflict: KeyCombo = .unset
+    /// The other keyboard binding this one must not collide with. A binding
+    /// (not a value) so the check reads it live — the local monitor's closure
+    /// outlives this view value, and the other binding may change mid-record.
+    var conflict: Binding<KeyCombo> = .constant(.unset)
     /// What `conflict` is called, for the rejection note.
     var conflictName: String = "another shortcut"
 
@@ -68,6 +70,10 @@ struct ShortcutRecorderView: View {
             }
         }
         .onDisappear(perform: stop)
+        // Switching away mid-record would otherwise leave every global
+        // trigger suspended until the user comes back and presses Esc.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didResignActiveNotification)) { _ in stop() }
     }
 
     private func toggle() {
@@ -79,7 +85,7 @@ struct ShortcutRecorderView: View {
         pendingModifiers = []
         rejection = nil
         // Let existing bindings reach this recorder instead of firing dictation.
-        HotkeyMonitor.isSuspended = true
+        HotkeyMonitor.suspend()
         // Capture keys AND modifier changes so `fn`/modifier-only chords can be
         // recorded too. (This local monitor is for recording only; the live
         // hotkey fires from a CGEventTap.)
@@ -90,7 +96,7 @@ struct ShortcutRecorderView: View {
     }
 
     private func stop() {
-        if recording { HotkeyMonitor.isSuspended = false }
+        if recording { HotkeyMonitor.resume() }
         recording = false
         pendingModifiers = []
         if let monitor { NSEvent.removeMonitor(monitor) }
@@ -100,7 +106,7 @@ struct ShortcutRecorderView: View {
     /// Write `candidate` back unless it collides with the other binding, in
     /// which case say so and keep recording.
     private func commit(_ candidate: KeyCombo) {
-        if candidate.conflicts(with: conflict) {
+        if candidate.conflicts(with: conflict.wrappedValue) {
             rejection = "Already used by \(conflictName) — pick a different shortcut."
             pendingModifiers = []
             return
