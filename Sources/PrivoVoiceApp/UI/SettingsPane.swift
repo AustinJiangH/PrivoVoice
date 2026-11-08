@@ -82,9 +82,7 @@ struct SettingsPane: View {
             Section {
                 LabeledContent("Version", value: "\(AppInfo.displayName) \(AppInfo.versionDescription)")
                 if let err = env.appState.lastError {
-                    Label(err, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.warning)
+                    WarningCallout(message: err)
                 }
             }
         }
@@ -223,16 +221,16 @@ struct SettingsPane: View {
             .disabled(!settings.formatFinalTranscript)
 
             // Honesty check: the toggle is on but there's no model to format
-            // with and no download running — say so; the row below has the
-            // Download/Retry action.
+            // with and no download running — say so, with a Download action
+            // right in the callout.
             if settings.formatFinalTranscript {
                 switch FormatterStore.shared.phase {
                 case .notInstalled, .failed:
-                    Label("Formatting is on but the model isn't installed — "
-                          + "transcripts are delivered unformatted.",
-                          systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.warning)
+                    WarningCallout(
+                        message: "Formatting is on but the model isn't installed — "
+                            + "transcripts are delivered unformatted.",
+                        actionTitle: "Download",
+                        action: { FormatterStore.shared.download() })
                 case .downloading, .installed:
                     EmptyView()
                 }
@@ -275,7 +273,7 @@ struct SettingsPane: View {
                 HStack(spacing: 8) {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(AppTheme.warning)
+                        .foregroundStyle(AppTheme.warningText)
                         .lineLimit(2)
                     Button("Retry") { store.download() }
                 }

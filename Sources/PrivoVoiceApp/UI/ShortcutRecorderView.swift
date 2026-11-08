@@ -32,7 +32,7 @@ struct ShortcutRecorderView: View {
             if let rejection {
                 Text(rejection)
                     .font(.caption2)
-                    .foregroundStyle(AppTheme.warning)
+                    .foregroundStyle(AppTheme.warningText)
             }
         }
     }

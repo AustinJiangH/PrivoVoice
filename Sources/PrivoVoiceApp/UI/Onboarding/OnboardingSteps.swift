@@ -243,7 +243,7 @@ private struct ModelCardBody: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label(message, systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(AppTheme.warning)
+                    .foregroundStyle(AppTheme.warningText)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Try again", action: onDownload)
                     .buttonStyle(.bordered)
@@ -465,7 +465,7 @@ struct FormattingStep: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label(message, systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(AppTheme.warning)
+                    .foregroundStyle(AppTheme.warningText)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("You can retry the download anytime in Settings.")
                     .font(.caption)
@@ -479,7 +479,7 @@ struct FormattingStep: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label("The download didn't finish.", systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(AppTheme.warning)
+                    .foregroundStyle(AppTheme.warningText)
                 Button("Resume download", action: onEnable)
                     .buttonStyle(.bordered)
             }
@@ -490,7 +490,7 @@ struct FormattingStep: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: systemImage)
                 .font(.callout)
-                .foregroundStyle(AppTheme.warning)
+                .foregroundStyle(AppTheme.warningText)
                 .frame(width: 20)
             Text(text)
                 .font(.callout)
@@ -554,7 +554,7 @@ struct TryItStep: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                     }
                     .font(.caption)
-                    .foregroundStyle(AppTheme.warning)
+                    .foregroundStyle(AppTheme.warningText)
                     .multilineTextAlignment(.leading)
                     .padding(.horizontal, 12)
                 }

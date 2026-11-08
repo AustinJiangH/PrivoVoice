@@ -57,6 +57,9 @@ enum AppTheme {
     static let positive = emerald
     /// Caution — approaching a limit, waiting, a missing permission.
     static let warning = sunlitClay
+    /// Warning TEXT. The amber `warning` hue is too light to read as text on
+    /// light backgrounds, so light mode uses a deep amber; dark mode keeps it.
+    static let warningText = Color(light: 0x8A5300, dark: 0xF2C078)
     /// Alert / stop — over a limit, errors, destructive actions.
     static let danger = tigerFlame
     /// In-flight work — transcribing, downloading, indeterminate progress.
