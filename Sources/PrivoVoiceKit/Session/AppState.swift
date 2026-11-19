@@ -40,6 +40,10 @@ public final class AppState {
     public private(set) var lastTranscript: String = ""
     /// A user-facing error from the last session, if any.
     public var lastError: String?
+    /// A short message the HUD flashes after a session that failed (e.g. "No
+    /// mic audio") — `lastError` holds the full text. Cleared by the HUD after
+    /// a moment, or by the next session.
+    public private(set) var notice: String?
 
     /// When the current recording started (set on `.listening`, cleared on reset).
     /// The HUD derives elapsed/remaining time from this via a timeline.
@@ -71,6 +75,8 @@ public final class AppState {
         isModelWarming && phase == .transcribing ? "Warming up model…" : phase.label
     }
     func setLevel(_ l: Float) { level = l }
+    func setNotice(_ n: String?) { notice = n }
+    public func clearNotice() { notice = nil }
     func setPartial(_ t: String) { partialText = t }
     func commitTranscript(_ t: String) { lastTranscript = t; partialText = "" }
     /// Start the recording clock at "now" for a model whose single-pass limit is

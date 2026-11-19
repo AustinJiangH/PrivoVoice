@@ -9,6 +9,7 @@
 import AVFoundation
 import Foundation
 import Observation
+import os
 import VoixfulEngine
 import VoixfulSpeech
 
@@ -38,6 +39,14 @@ public final class DictationController {
     /// How long `stop()` waits for the formatter before falling back to the raw
     /// transcript. Injectable for tests.
     var formatTimeoutSeconds: Double = 60
+    /// A press at least this long that yields no audio (or only digital
+    /// silence) is reported as a microphone problem rather than dropped
+    /// silently — shorter taps are normal no-speech taps. Injectable for tests.
+    var silentMicMinSeconds: Double = 1.0
+
+    /// Persisted diagnostics (`log show --predicate 'subsystem == "com.privovoice.app"'`),
+    /// so a "nothing was transcribed" report can be traced after the fact.
+    private static let log = Logger(subsystem: "com.privovoice.app", category: "dictation")
 
     /// Everything one live session owns.
     private final class Session {
@@ -55,6 +64,17 @@ public final class DictationController {
         /// opened yet, without cancelling the forwarding task (which would drop
         /// the AsyncStream's buffered tail).
         var stopRequested = false
+        /// The engine acknowledged `begin` — until then mic audio is held in
+        /// the forwarder (the mic opens first so no speech is lost).
+        var engineReady = false
+        /// A start-up failure was already reported; skip the silent-mic check.
+        var failed = false
+        /// Mic buffers seen and their loudest sample — for the dead/silent-mic
+        /// check at release and the diagnostics log.
+        var buffersReceived = 0
+        var maxPeak: Float = 0
+        let pressedAt = Date()
+        var releasedAt: Date?
         init(capture: any AudioCapturing, sampleRate: Double) {
             self.capture = capture
             self.sampleRate = sampleRate
@@ -131,6 +151,7 @@ public final class DictationController {
         let locale = Locale(identifier: settings.localeIdentifier)
 
         appState.lastError = nil
+        appState.setNotice(nil)
         appState.startRecordingClock(limitSeconds: spec.maxAudioSeconds)
         appState.setModelWarming(url.path != warmModelPath)
         appState.setPhase(.listening)
@@ -143,76 +164,99 @@ public final class DictationController {
         let pendingWarm = warmTask
 
         session.run = Task { @MainActor in
-            // The model is still warming up in the background: open the mic now
-            // (the stream buffers) so nothing said meanwhile is lost, then begin
-            // once the engine is free — it takes one utterance at a time.
-            var earlyStream: AsyncStream<AnalyzerInput>?
-            if let pendingWarm {
-                let stream = capture.makeStream()
-                do {
-                    try capture.start()
-                } catch {
-                    appState.lastError = "\(error)"
-                    return
-                }
-                earlyStream = stream
-                await pendingWarm.value
-                // Cancelled while waiting: never begin an engine session nobody ends.
-                if Task.isCancelled { capture.stop(); return }
-            }
+            // A very quick tap may have already released before this task ran —
+            // signalled by `stopRequested` (NOT Task cancellation, which would
+            // make the AsyncStream below drop its buffered tail).
+            if session.stopRequested { return }
+            // Open the mic FIRST and hold its audio here until the engine is
+            // ready: the engine may still be warming up, or (in the sidecar)
+            // finishing a previous request, and waiting for it with the mic
+            // closed silently lost everything said meanwhile — a flat meter
+            // and an empty transcript on a short press.
+            let stream = capture.makeStream()
             do {
-                try await engine.begin(
-                    modelURL: url, backend: spec.backend, locale: locale, format: format,
-                    onPartial: { text in
-                        // Drop the engine's "[ preparing <model> … ]" warming
-                        // notice — it's status, not transcript, and its length
-                        // briefly expanded the live box. Filtered here so the
-                        // engine stays untouched.
-                        // (It does mean the model is loading, though.)
-                        if Self.isStatusPartial(text) {
-                            Task { @MainActor in appState.setModelWarming(true) }
-                            return
-                        }
-                        // Real words: the model is up.
-                        Task { @MainActor in
-                            appState.setModelWarming(false)
-                            appState.setPartial(text)
-                        }
-                    })
+                try capture.start()
             } catch {
-                if earlyStream != nil { capture.stop() }
-                appState.lastError = "Could not start \(spec.displayName): \(error)"
+                Self.log.error("mic failed to start: \(String(describing: error), privacy: .public)")
+                session.failed = true
+                appState.lastError = "\(error)"
+                appState.setNotice("Mic unavailable")
                 return
             }
+            Self.log.notice("""
+                mic open: \(format.sampleRate, privacy: .public) Hz, \
+                model \(spec.id, privacy: .public), warming \(pendingWarm != nil, privacy: .public)
+                """)
 
-            let stream: AsyncStream<AnalyzerInput>
-            if let earlyStream {
-                // Already capturing — feed what was buffered, even if released.
-                stream = earlyStream
-            } else {
-                // A very quick tap may have already released before the mic
-                // opened — signalled by `stopRequested` (NOT Task cancellation,
-                // which would make the AsyncStream below drop its buffered tail).
-                if session.stopRequested { return }
-                stream = capture.makeStream()
+            let began = Task { @MainActor () -> Error? in
+                // The model is still warming up in the background: begin once
+                // the engine is free — it takes one utterance at a time.
+                await pendingWarm?.value
+                // Cancelled while waiting: never begin an engine session nobody ends.
+                if Task.isCancelled { return CancellationError() }
+                let t0 = Date()
                 do {
-                    try capture.start()
+                    try await engine.begin(
+                        modelURL: url, backend: spec.backend, locale: locale, format: format,
+                        onPartial: { text in
+                            // Drop the engine's "[ preparing <model> … ]" warming
+                            // notice — it's status, not transcript, and its length
+                            // briefly expanded the live box. Filtered here so the
+                            // engine stays untouched.
+                            // (It does mean the model is loading, though.)
+                            if Self.isStatusPartial(text) {
+                                Task { @MainActor in appState.setModelWarming(true) }
+                                return
+                            }
+                            // Real words: the model is up.
+                            Task { @MainActor in
+                                appState.setModelWarming(false)
+                                appState.setPartial(text)
+                            }
+                        })
                 } catch {
-                    appState.lastError = "\(error)"
-                    return
+                    return error
                 }
+                Self.log.notice("engine ready after \(Date().timeIntervalSince(t0), format: .fixed(precision: 2), privacy: .public) s")
+                session.engineReady = true
+                return nil
             }
 
             // Forward mic audio until the stream ends. stop() finishes the stream
             // (via capture.stop()); the AsyncStream still delivers every buffered
             // buffer before terminating, so the utterance tail is never dropped.
+            var held: [[Float]] = []
             for await input in stream {
                 let (samples, peak) = Self.monoSamples(input.buffer)
-                session.framesFed += samples.count   // for the transcribed-length total
+                session.buffersReceived += 1
+                session.maxPeak = max(session.maxPeak, peak)
                 appState.setLevel(peak)
-                await engine.feed(samples)
+                if session.engineReady {
+                    for chunk in held { await Self.feed(chunk, to: engine, session: session) }
+                    held.removeAll()
+                    await Self.feed(samples, to: engine, session: session)
+                } else {
+                    held.append(samples)
+                }
             }
+            // Released (or cancelled) — wait for the engine, then flush.
+            if Task.isCancelled { began.cancel(); return }
+            if let error = await began.value {
+                Self.log.error("engine begin failed: \(String(describing: error), privacy: .public)")
+                session.failed = true
+                appState.lastError = "Could not start \(spec.displayName): \(error)"
+                appState.setNotice("Couldn't start")
+                return
+            }
+            for chunk in held { await Self.feed(chunk, to: engine, session: session) }
         }
+    }
+
+    /// Forward one mono chunk, counting it toward the transcribed length.
+    private static func feed(_ samples: [Float], to engine: any DictationEngine,
+                             session: Session) async {
+        session.framesFed += samples.count
+        await engine.feed(samples)
     }
 
     /// End the session (key-up): stop the mic, finalize, deliver the transcript.
@@ -222,6 +266,7 @@ public final class DictationController {
         finalizing = true
         appState.setPhase(.transcribing)
         session.stopRequested = true   // short-circuits a not-yet-capturing session
+        session.releasedAt = Date()
         session.capture.stop()         // ends the stream so the forwarder drains
         // NB: do NOT cancel `session.run` — that would make the AsyncStream drop
         // its buffered tail. `capture.stop()` drains it cleanly.
@@ -232,7 +277,9 @@ public final class DictationController {
         let epoch = sessionEpoch
         Task { @MainActor in
             _ = await session.run?.value          // let forwarding drain
-            let ended = try? await engine.end()
+            var ended: String?
+            var endError: Error?
+            do { ended = try await engine.end() } catch { endError = error }
             if ended != nil { warmModelPath = session.modelPath }
             appState.setModelWarming(false)
             let raw = (ended ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -256,6 +303,24 @@ public final class DictationController {
                 final = final.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             guard sessionEpoch == epoch else { return }   // cancelled mid-finalize
+            let held = (session.releasedAt ?? Date()).timeIntervalSince(session.pressedAt)
+            let endNote = endError.map { ", end failed: \(String(describing: $0))" } ?? ""
+            Self.log.notice("""
+                released after \(held, format: .fixed(precision: 2), privacy: .public) s: \
+                \(session.buffersReceived, privacy: .public) buffers, \
+                peak \(session.maxPeak, format: .fixed(precision: 5), privacy: .public), \
+                \(session.framesFed, privacy: .public) frames fed, \
+                \(raw.count, privacy: .public) chars\(endNote, privacy: .public)
+                """)
+            // An empty result is normally a no-speech tap — but say so when the
+            // mic or engine actually failed, instead of silently doing nothing.
+            if final.isEmpty, !session.failed,
+               let problem = Self.diagnose(heldSeconds: held, minSeconds: silentMicMinSeconds,
+                                           buffers: session.buffersReceived,
+                                           peak: session.maxPeak, endError: endError) {
+                appState.lastError = problem.message
+                appState.setNotice(problem.notice)
+            }
             appState.setPhase(.idle)
             appState.reset()
             finalizing = false    // now a new press may begin
@@ -422,6 +487,35 @@ public final class DictationController {
     }
 
     // MARK: Helpers
+
+    /// Below this peak a "live" mic is delivering digital silence — macOS does
+    /// this when microphone access is denied, and a dead or muted device does
+    /// too. A working mic's noise floor in a quiet room sits well above it.
+    nonisolated static let silenceFloor: Float = 1e-4
+
+    /// Why an utterance that produced no text failed, if it did: a short
+    /// HUD notice plus the full message for Settings. `nil` for an ordinary
+    /// no-speech tap.
+    nonisolated static func diagnose(
+        heldSeconds: Double, minSeconds: Double, buffers: Int, peak: Float, endError: Error?
+    ) -> (notice: String, message: String)? {
+        if let endError {
+            return ("Engine failed", "Transcription failed: \(endError)")
+        }
+        guard heldSeconds >= minSeconds else { return nil }
+        if buffers == 0 {
+            return ("No mic audio",
+                    "The microphone didn't deliver any audio. Check the input device in "
+                    + "System Settings → Sound → Input.")
+        }
+        if peak < silenceFloor {
+            return ("Mic is silent",
+                    "The microphone only sent silence. Check that PrivoVoice is allowed in "
+                    + "System Settings → Privacy & Security → Microphone, and that the "
+                    + "input device isn't muted.")
+        }
+        return nil
+    }
 
     private func resolveModel() -> (ModelSpec, URL)? {
         guard let id = settings.selectedModelID,

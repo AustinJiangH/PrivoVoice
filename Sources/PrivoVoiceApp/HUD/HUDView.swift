@@ -61,6 +61,11 @@ private struct NotchIsland: View {
         appState.phase == .transcribing || appState.phase == .polishing
     }
 
+    /// A failed session's notice, shown once dictation is over.
+    private var notice: String? {
+        appState.phase.isActive ? nil : appState.notice
+    }
+
     private var rowHeight: CGFloat { max(notch.height, 28) }
 
     private var openWidth: CGFloat {
@@ -98,6 +103,7 @@ private struct NotchIsland: View {
 
     private var glowColor: Color {
         guard isOpen else { return .clear }
+        if notice != nil { return AppTheme.danger.opacity(0.35) }
         if isFinalizing { return AppTheme.progress.opacity(0.35) }
         return progress.tint.opacity(0.18 + 0.4 * Double(min(1, max(0, appState.level))))
     }
@@ -106,7 +112,11 @@ private struct NotchIsland: View {
     private var topRow: some View {
         HStack(spacing: 0) {
             Group {
-                if isFinalizing {
+                if notice != nil {
+                    Image(systemName: "mic.slash.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AppTheme.danger)
+                } else if isFinalizing {
                     TranscribingIndicator(tint: AppTheme.progress)
                 } else {
                     AmplitudeMeter(level: appState.level, tint: progress.tint)
@@ -117,7 +127,12 @@ private struct NotchIsland: View {
             Spacer(minLength: notch.width)
 
             Group {
-                if isFinalizing {
+                if let notice {
+                    Text(notice)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .minimumScaleFactor(0.8)
+                        .foregroundStyle(AppTheme.danger)
+                } else if isFinalizing {
                     Text(appState.phase == .polishing ? "Polishing"
                          : appState.isModelWarming ? "Warming up" : "Transcribing")
                         .font(.system(size: 11, weight: .medium, design: .rounded))

@@ -102,6 +102,8 @@ final class HUDController {
     /// Orders the panels out once the closing animations have finished;
     /// cancelled if a new session starts first.
     private var hideTask: Task<Void, Never>?
+    /// Clears a failed session's notice once it has been on screen a while.
+    private var noticeTask: Task<Void, Never>?
     /// The transcript's current height (reported by its SwiftUI content) and
     /// the frame it rests at on screen; the panel is fitted to these.
     private var transcriptHeight: CGFloat = 48
@@ -128,6 +130,8 @@ final class HUDController {
     private static let transcriptSlide: CGFloat = 16
     /// Long enough for the closing springs in the views to settle.
     private static let collapseDuration: Duration = .milliseconds(450)
+    /// How long a failed session's notice stays on the island.
+    private static let noticeDuration: Duration = .seconds(3)
 
     init(appState: AppState, settings: AppSettings) {
         self.appState = appState
@@ -243,6 +247,7 @@ final class HUDController {
     private func observePhase() {
         withObservationTracking {
             _ = appState.phase
+            _ = appState.notice
         } onChange: {
             Task { @MainActor in
                 self.updateVisibility()
@@ -252,8 +257,16 @@ final class HUDController {
         updateVisibility()
     }
 
+    /// The island stays up while dictating, and briefly after a session that
+    /// failed so its notice ("No mic audio") is seen.
+    private var islandWanted: Bool { appState.phase.isActive || appState.notice != nil }
+
     private func updateVisibility() {
-        if appState.phase.isActive {
+        if appState.notice != nil, !appState.phase.isActive {
+            hideTranscript()
+            dismissNoticeLater()
+        }
+        if islandWanted {
             hideTask?.cancel()
             hideTask = nil
             guard !presentation.isOpen else { return }
@@ -263,9 +276,9 @@ final class HUDController {
                 reposition()
                 islandPanel.orderFrontRegardless()
             }
-            if settings.showLiveTranscription { showTranscript() }
+            if settings.showLiveTranscription, appState.phase.isActive { showTranscript() }
             Task { @MainActor in
-                guard self.appState.phase.isActive else { return }
+                guard self.islandWanted else { return }
                 self.presentation.isOpen = true
             }
         } else {
@@ -274,10 +287,22 @@ final class HUDController {
             hideTask?.cancel()
             hideTask = Task { @MainActor in
                 try? await Task.sleep(for: Self.collapseDuration)
-                guard !Task.isCancelled, !self.appState.phase.isActive else { return }
+                guard !Task.isCancelled, !self.islandWanted else { return }
                 self.islandPanel.orderOut(nil)
                 self.transcriptPanel.orderOut(nil)
             }
+        }
+    }
+
+    /// Clear the current notice after a few seconds (closing the island),
+    /// unless a newer one or a new session replaced it.
+    private func dismissNoticeLater() {
+        noticeTask?.cancel()
+        let notice = appState.notice
+        noticeTask = Task { @MainActor in
+            try? await Task.sleep(for: Self.noticeDuration)
+            guard !Task.isCancelled, self.appState.notice == notice else { return }
+            self.appState.clearNotice()
         }
     }
 

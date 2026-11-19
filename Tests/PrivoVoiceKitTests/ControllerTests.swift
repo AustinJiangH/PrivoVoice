@@ -51,16 +51,24 @@ actor MockEngine: DictationEngine {
     private(set) var cancelCount = 0
     var finalText = "Hello."
     var throwOnBegin: Error?
+    var throwOnEnd: Error?
+    /// Simulates a slow `begin` (a busy sidecar / warming engine).
+    var beginDelayNanos: UInt64 = 0
     private var onPartial: (@Sendable (String) -> Void)?
 
     func begin(modelURL: URL, backend: ModelBackend, locale: Locale,
                format: AudioStreamFormat, onPartial: @escaping @Sendable (String) -> Void) async throws {
         beginCount += 1
         self.onPartial = onPartial
+        if beginDelayNanos > 0 { try? await Task.sleep(nanoseconds: beginDelayNanos) }
         if let throwOnBegin { throw throwOnBegin }
     }
     func feed(_ samples: [Float]) { fedBatches += 1; fedSamples += samples.count }
-    func end() async throws -> String { endCount += 1; return finalText }
+    func end() async throws -> String {
+        endCount += 1
+        if let throwOnEnd { throw throwOnEnd }
+        return finalText
+    }
     func cancel() { cancelCount += 1 }
     func emitPartial(_ t: String) { onPartial?(t) }
     struct Boom: Error {}
@@ -300,4 +308,129 @@ final class DictationControllerTests: XCTestCase {
 
 extension MockEngine {
     func setFinal(_ t: String) { finalText = t }
+    func setBeginDelay(_ n: UInt64) { beginDelayNanos = n }
+    func setThrowOnEnd(_ e: Error?) { throwOnEnd = e }
+}
+
+// MARK: - Dead / silent microphone
+
+final class MicFailureTests: XCTestCase {
+
+    @MainActor
+    private func makeController(engine: MockEngine, box: CaptureBox) throws
+        -> (DictationController, AppState) {
+        let tmp = FileManager.default.temporaryDirectory.appending(path: "voixmic-\(UUID().uuidString)")
+        let settings = AppSettings(storeURL: tmp.appending(path: "settings.json"))
+        settings.modelsDirectory = tmp.appending(path: "models")
+        let store = ModelStore(settings: settings)
+        let spec = ModelCatalog.all[0]
+        let asset = store.installURL(for: spec)
+        try FileManager.default.createDirectory(at: asset, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: asset.appending(path: "marker"))
+        settings.selectedModelID = spec.id
+        store.refresh()
+        let appState = AppState()
+        let controller = DictationController(
+            appState: appState, settings: settings, store: store,
+            engine: engine, makeCapture: box.factory())
+        controller.formatterModelPath = { nil }
+        return (controller, appState)
+    }
+
+    @MainActor
+    private func waitUntil(_ condition: @escaping () async -> Bool, timeout: TimeInterval = 5,
+                           file: StaticString = #filePath, line: UInt = #line) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while await !condition() {
+            if Date() > deadline { XCTFail("timed out waiting for condition", file: file, line: line); return }
+            try? await Task.sleep(nanoseconds: 3_000_000)
+        }
+    }
+
+    // The mic opens before the engine acknowledges `begin`: speech during a
+    // slow begin is metered live and still reaches the engine.
+    @MainActor
+    func testAudioDuringSlowBeginIsMeteredAndKept() async throws {
+        let engine = MockEngine()
+        await engine.setBeginDelay(300_000_000)
+        let box = CaptureBox()
+        let (controller, appState) = try makeController(engine: engine, box: box)
+        controller.start()
+        await waitUntil { box.all.first?.didStart == true }
+        box.all[0].yield(frames: 100)
+        box.all[0].yield(frames: 100)
+        await waitUntil { appState.level > 0 }
+        let fedEarly = await engine.fedBatches
+        XCTAssertEqual(fedEarly, 0, "nothing is fed before the engine is ready")
+        controller.stop()
+        await waitUntil { appState.phase == .idle }
+        let fed = await engine.fedSamples
+        XCTAssertEqual(fed, 200)
+        XCTAssertEqual(appState.lastTranscript, " Hello.")
+        XCTAssertNil(appState.notice)
+    }
+
+    @MainActor
+    func testSilentMicIsReported() async throws {
+        let engine = MockEngine()
+        await engine.setFinal("")
+        let box = CaptureBox()
+        let (controller, appState) = try makeController(engine: engine, box: box)
+        controller.silentMicMinSeconds = 0
+        controller.start()
+        await waitUntil { box.all.first?.didStart == true }
+        box.all[0].yield(frames: 100, value: 0)
+        controller.stop()
+        await waitUntil { appState.phase == .idle }
+        XCTAssertEqual(appState.notice, "Mic is silent")
+        XCTAssertNotNil(appState.lastError)
+    }
+
+    @MainActor
+    func testNoBuffersIsReported() async throws {
+        let engine = MockEngine()
+        await engine.setFinal("")
+        let box = CaptureBox()
+        let (controller, appState) = try makeController(engine: engine, box: box)
+        controller.silentMicMinSeconds = 0
+        controller.start()
+        await waitUntil { box.all.first?.didStart == true }
+        controller.stop()
+        await waitUntil { appState.phase == .idle }
+        XCTAssertEqual(appState.notice, "No mic audio")
+    }
+
+    // A quick no-speech tap is normal — no error.
+    @MainActor
+    func testShortSilentTapIsNotReported() async throws {
+        let engine = MockEngine()
+        await engine.setFinal("")
+        let box = CaptureBox()
+        let (controller, appState) = try makeController(engine: engine, box: box)
+        controller.start()
+        controller.stop()
+        await waitUntil { appState.phase == .idle }
+        XCTAssertNil(appState.notice)
+        XCTAssertNil(appState.lastError)
+    }
+
+    @MainActor
+    func testEngineFailureIsReported() async throws {
+        let engine = MockEngine()
+        await engine.setThrowOnEnd(MockEngine.Boom())
+        let box = CaptureBox()
+        let (controller, appState) = try makeController(engine: engine, box: box)
+        controller.start()
+        await waitUntil { box.all.first?.didStart == true }
+        box.all[0].yield(frames: 100)
+        controller.stop()
+        await waitUntil { appState.phase == .idle }
+        XCTAssertEqual(appState.notice, "Engine failed")
+        XCTAssertNotNil(appState.lastError)
+    }
+
+    func testDiagnoseIgnoresRealAudio() {
+        XCTAssertNil(DictationController.diagnose(
+            heldSeconds: 5, minSeconds: 1, buffers: 40, peak: 0.002, endError: nil))
+    }
 }
