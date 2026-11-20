@@ -6,10 +6,15 @@
 # Why: ad-hoc signing (`codesign -s -`) produces a different signature every
 # build, so TCC treats each rebuild as a new app and your granted permissions
 # vanish. A stable self-signed cert keeps one identity across builds, so you
-# grant once. Local development only — not trusted by other machines, not a
-# substitute for an Apple Developer ID for distribution.
+# grant once. Not trusted by other machines (Gatekeeper still asks on first
+# open), and not a substitute for an Apple Developer ID — but releases are
+# signed with it too (CI imports it from the SIGNING_P12 secret), so users'
+# grants survive updates.
 #
 # Run once:  ./scripts/setup-signing.sh   (then use make-app.sh as usual)
+#   or:      ./scripts/setup-signing.sh --import PrivoVoice-Dev.p12 PASSWORD
+#            to install the shared release identity (backup kept outside the
+#            repo, e.g. ~/.privovoice/signing/) so local builds match releases.
 
 set -euo pipefail
 
@@ -17,6 +22,20 @@ IDENTITY="PrivoVoice Dev"
 
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
     echo "[signing] '$IDENTITY' already exists — nothing to do."
+    exit 0
+fi
+
+if [ "${1:-}" = "--import" ]; then
+    P12="${2:?usage: setup-signing.sh --import FILE.p12 PASSWORD}"
+    P12_PW="${3:?usage: setup-signing.sh --import FILE.p12 PASSWORD}"
+    KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+    TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+    echo "[signing] importing $P12 into the login keychain…"
+    security import "$P12" -k "$KEYCHAIN" -P "$P12_PW" -T /usr/bin/codesign >/dev/null
+    security find-certificate -c "$IDENTITY" -p "$KEYCHAIN" > "$TMP/dev.crt"
+    echo "[signing] trusting it for code signing…"
+    security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$TMP/dev.crt"
+    security find-identity -v -p codesigning | grep "$IDENTITY"
     exit 0
 fi
 
